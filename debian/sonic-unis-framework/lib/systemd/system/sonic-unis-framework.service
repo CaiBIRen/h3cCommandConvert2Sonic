@@ -1,0 +1,12 @@
+[Unit]
+Description= UNI SONIC Framework Daemon
+# After=crond.service
+
+[Service]
+Type=simple
+LimitNOFILE=1024000
+ExecStart=/bin/bash -c -l /usr/local/bin/sonic-unis-framework
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
