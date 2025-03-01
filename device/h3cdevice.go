@@ -538,8 +538,7 @@ func IfmgrEncodeGET(node *xmlquery.Node, c *tcontext.Tcontext) error {
 			var ifmgrnode h3cmodel.Ifmgr
 			var ifmgrinterfaces h3cmodel.Interfaces
 			vlanid, _ := GetInterfaceString(Intname)
-			c.Cachedata[basic.SONICVLANINTERFACEELEMENT] = vlanid
-			err := sonichandlers.GetSONICVlanInterfaceByName(vlanid)
+			err := sonichandlers.GetSONICVlanInterfaceByName("Vlan" + vlanid)
 			//返回err代表查找不到
 			if err != nil {
 				return nil
@@ -695,7 +694,7 @@ func IfmgrEncodeAction(c *tcontext.Tcontext) error {
 				vlaninterfaceroot.SonicVLANInterface.VLAN_INTERFACE.VLAN_INTERFACE_LIST, vlaninterfacenode)
 			c.SonicConfig[basic.SONICVLANKEY] = vlanroot
 			c.SonicConfig[basic.SONICVLANINTERFACEKEY] = vlaninterfaceroot
-			fmt.Println(c.SonicConfig)
+			// fmt.Println(c.SonicConfig)
 			if v.Remove != nil {
 				c.Operation = basic.OPERREMOVE
 				if err := sonichandlers.RemoveSONICVlanInterface(c); err != nil {
@@ -710,18 +709,62 @@ func IfmgrEncodeAction(c *tcontext.Tcontext) error {
 				}
 			}
 		}
+		if v.IfTypeExt == "16" {
+			var loopbackroot sonicmodel.LoopbackInterfacesroot
+			//loopback-interface
+			loopbackinterfacenode := sonicmodel.LoopbackInterface{
+				LoIfName: "Loopback" + v.Number,
+			}
+			loopbackroot.LoopbackInterfaceList = append(loopbackroot.LoopbackInterfaceList, loopbackinterfacenode)
+			c.SonicConfig[basic.SONICLOOPBACKKEY] = loopbackroot
+			// fmt.Println(c.SonicConfig)
+			if v.Remove != nil {
+				c.Operation = basic.OPERREMOVE
+				if err := sonichandlers.RemoveSONICLoopbackInterface(c); err != nil {
+					return err
+				}
+			} else {
+				if err = sonichandlers.ConfigSONICLoopbackInterface(c); err != nil {
+					return err
+				}
+			}
+		}
+
 	}
 	return nil
 }
 
-func OSPFNetworkTypeTrans(networktype int) string {
+func OSPFNetworkTypeTrans(networktype int) (string, error) {
 	switch networktype {
 	case 1:
-		return "BROADCAST_NETWORK"
+		return "BROADCAST_NETWORK", nil
 	case 3:
-		return "POINT_TO_POINT_NETWORK"
+		return "POINT_TO_POINT_NETWORK", nil
 	}
-	return ""
+	return "", errors.New("Unrecognized ospf  networktype")
+}
+
+func OSPFRedistProtocolTrans(protocol int) (string, error) {
+	switch protocol {
+	case 1:
+		return "DIRECTLY_CONNECTED", nil
+	case 2:
+		return "STATIC", nil
+	case 6:
+		return "BGP", nil
+	}
+	return "", errors.New("Unrecognized protocol type")
+}
+
+func GetOSPFVrf(c *tcontext.Tcontext, Name string) (string, error) {
+	routerindex := Name + basic.SONICOSPFINSTANCEELELMENT
+	if ospfroutermap, ok := c.DiscreteConfiguration[basic.SONICOSPFKEY]; ok {
+		if ospfrouternode, ok := ospfroutermap[routerindex]; ok {
+			node := ospfrouternode.(sonicmodel.OSPFv2Router)
+			return node.VrfName, nil
+		}
+	}
+	return "", errors.New("The request does not contain the ospf instance configuration before configuring other tables")
 }
 
 func OSPFEncodeMerge(c *tcontext.Tcontext) error {
@@ -734,14 +777,42 @@ func OSPFEncodeMerge(c *tcontext.Tcontext) error {
 	}
 	//vlan + vlaninterface + vxlanmapping
 	CreateFeaturemap(c.DiscreteConfiguration, basic.SONICOSPFKEY)
+	if len(data.Instances.Instance) > 0 {
+		for _, v := range data.Instances.Instance {
+			v.VRF = VrfNameFormat(v.VRF)
+			var ospfinstance sonicmodel.OSPFv2Router
+			ospfinstance.RouterID = v.RouterId
+			ospfinstance.VrfName = v.VRF
+			ospfinstance.Enable = true
+			ospfinstance.Description = "OSPF_Name" + v.Name
+			//TODO:VpnInstanceCapability 无对应配置
+			ospfinstanceindex := Parameters2Index(v.Name) + basic.SONICOSPFINSTANCEELELMENT
+			c.DiscreteConfiguration[basic.SONICOSPFKEY][ospfinstanceindex] = ospfinstance
+		}
+	}
+	if len(data.Areas.Area) > 0 {
+		for _, v := range data.Areas.Area {
+			var ospfarea sonicmodel.OSPFv2RouterArea
+			vrfname, err := GetOSPFVrf(c, v.Name)
+			if err != nil {
+				return err
+			}
+			ospfarea.VrfName = vrfname
+			ospfarea.AreaID = v.AreaId
+			ospfarea.Description = "OSPF_Name" + v.Name
+			ospfarea.Enable = true
+			ospfareaindex := Parameters2Index(v.Name, v.AreaId) + basic.SONICOSPFAREAELELMENT
+			c.DiscreteConfiguration[basic.SONICOSPFKEY][ospfareaindex] = ospfarea
+		}
+	}
 	if len(data.Interfaces.Interface) > 0 {
 		for _, v := range data.Interfaces.Interface {
 			if strings.Contains(v.IfIndex, "Vlan") || strings.Contains(v.IfIndex, "vlan") {
 				if v.NetworkType <= 0 {
 					return errors.New("unkown ospf network-type")
 				}
-				networktype := OSPFNetworkTypeTrans(v.NetworkType)
-				if networktype == "" {
+				networktype, err := OSPFNetworkTypeTrans(v.NetworkType)
+				if err != nil {
 					return errors.New("unkown ospf network-type")
 				}
 				var ospfinterfacenode sonicmodel.OSPFv2Interface
@@ -759,6 +830,25 @@ func OSPFEncodeMerge(c *tcontext.Tcontext) error {
 				ospfinterfaceindex := Parameters2Index(vlanid, ospfinterfacenode.Address) + basic.SONICOSPFINTERFACEELELMENT
 				c.DiscreteConfiguration[basic.SONICOSPFKEY][ospfinterfaceindex] = ospfinterfacenode
 			}
+		}
+	}
+	if len(data.Redistributes.Redist) > 0 {
+		for _, v := range data.Redistributes.Redist {
+			var ospfredistributenode sonicmodel.OSPFv2RouterDistributeRoute
+			vrfname, err := GetOSPFVrf(c, v.Name)
+			if err != nil {
+				return err
+			}
+			protocol, err := OSPFRedistProtocolTrans(v.Protocol)
+			if err != nil {
+				return err
+			}
+			ospfredistributenode.VrfName = vrfname
+			ospfredistributenode.TableID = v.TopoId
+			ospfredistributenode.Direction = "IMPORT"
+			ospfredistributenode.Protocol = protocol
+			ospfredistributeindex := Parameters2Index(v.Name, protocol) + basic.SONICOSPFREDISTELELMENT
+			c.DiscreteConfiguration[basic.SONICOSPFKEY][ospfredistributeindex] = ospfredistributenode
 		}
 	}
 	return nil
@@ -910,6 +1000,14 @@ func L3vpnEncodeMerge(c *tcontext.Tcontext) error {
 				vlan_interface_node := sonicmodel.VlanInterface{VlanName: "Vlan" + ifidx, VrfName: v.VRF}
 				vlaninterfaceindex := Parameters2Index(vlan_interface_node.VlanName) + basic.SONICVLANINTERFACEELEMENT
 				c.DiscreteConfiguration[basic.SONICVLANINTERFACEKEY][vlaninterfaceindex] = vlan_interface_node
+			} else if strings.Contains(v.IfIndex, "Loopback") || strings.Contains(v.IfIndex, "loopback") {
+				ifidx, err := GetInterfaceString(v.IfIndex)
+				if err != nil {
+					return err
+				}
+				loopback_interface_node := sonicmodel.LoopbackInterface{LoIfName: "Loopback" + ifidx, VrfName: v.VRF}
+				loopbackinterfaceindex := Parameters2Index(loopback_interface_node.LoIfName) + basic.SONICLOOPBACKINTERFACEELEMENT
+				c.DiscreteConfiguration[basic.SONICLOOPBACKKEY][loopbackinterfaceindex] = loopback_interface_node
 			}
 		}
 	}
@@ -1465,6 +1563,22 @@ func IPV4ADDRESSEncodeMerge(c *tcontext.Tcontext) error {
 				}
 				c.DiscreteConfiguration[basic.SONICADDRESS][addressindex] = ipv4addressnode
 			}
+			if strings.Contains(v.IfIndex, "Loopback") || strings.Contains(v.IfIndex, "loopback") {
+				loopbackid, _ := GetInterfaceString(v.IfIndex)
+				prefix := MaskToPrefix(v.Ipv4Mask)
+				cidr := v.Ipv4Address + "/" + prefix
+				addressindex := Parameters2Index("Loopback"+loopbackid, cidr) + basic.SONICLOOPBACKINTERFACEIPADDRELEMENT
+				var second bool
+				if v.AddressOrigin == 2 {
+					second = true
+				}
+				ipv4addressnode := sonicmodel.LoopbackInterfaceIPAddr{
+					LoIfName:  "Loopback" + loopbackid,
+					IpPrefix:  cidr,
+					Secondary: second,
+				}
+				c.DiscreteConfiguration[basic.SONICADDRESS][addressindex] = ipv4addressnode
+			}
 		}
 	}
 	return nil
@@ -1496,6 +1610,17 @@ func IPV6ADDRESSEncodeMerge(c *tcontext.Tcontext) error {
 				prefix := v.Ipv6Address + "/" + v.Ipv6PrefixLength
 				ipv6addressnode := sonicmodel.VLANInterfaceIPAddr{
 					VlanName:  "Vlan" + vlanid,
+					IpPrefix:  prefix,
+					Secondary: false,
+				}
+				c.DiscreteConfiguration[basic.SONICADDRESS][addressindex] = ipv6addressnode
+			}
+			if strings.Contains(v.IfIndex, "Loopback") || strings.Contains(v.IfIndex, "loopback") {
+				vlanid, _ := GetInterfaceString(v.IfIndex)
+				addressindex := Parameters2Index("Loopback"+vlanid, v.Ipv6Address, v.Ipv6PrefixLength) + basic.SONICLOOPBACKINTERFACEIPADDRELEMENT
+				prefix := v.Ipv6Address + "/" + v.Ipv6PrefixLength
+				ipv6addressnode := sonicmodel.LoopbackInterfaceIPAddr{
+					LoIfName:  "Loopback" + vlanid,
 					IpPrefix:  prefix,
 					Secondary: false,
 				}

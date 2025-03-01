@@ -220,8 +220,8 @@ func GetHandlerResolve(rsp *httpclient.SonicResp) error {
 			if rsperr == "" {
 				rsperr = rsp.ErrorMessage.SErrors.ErrorList[0].ErrorTag
 			}
-			errmsg := fmt.Sprintf("Opreation failed:%s", rsperr)
-			glog.Errorf("config error occurred: %s", errmsg)
+			errmsg := fmt.Sprintf("GET failed:%s", rsperr)
+			glog.Error(errmsg)
 			return errors.New(errmsg)
 		}
 	} else {

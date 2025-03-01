@@ -96,7 +96,17 @@ func OSPFv2Intergration(config map[string]interface{}) sonicmodel.SonicOspfv2 {
 		switch childkey {
 		case "OSPF_INTERFACE":
 			ospfinterface := node.(sonicmodel.OSPFv2Interface)
-			ospfroot.SonicOspfv2.OSPFv2INTERFACES.OSPFV2_INTERFACE_LIST = append(ospfroot.SonicOspfv2.OSPFv2INTERFACES.OSPFV2_INTERFACE_LIST, ospfinterface)
+			ospfroot.SonicOspfv2tables.OSPFv2Interface.OSPFV2_INTERFACE_LIST = append(ospfroot.SonicOspfv2tables.OSPFv2Interface.OSPFV2_INTERFACE_LIST, ospfinterface)
+		case "OSPF_Router":
+			ospfrouter := node.(sonicmodel.OSPFv2Router)
+			ospfroot.SonicOspfv2tables.OSPFv2Router.OSPFv2RouterList = append(ospfroot.SonicOspfv2tables.OSPFv2Router.OSPFv2RouterList, ospfrouter)
+		case "OSPF_AREA":
+			ospfarea := node.(sonicmodel.OSPFv2RouterArea)
+			ospfroot.SonicOspfv2tables.OSPFv2RouterArea.OSPFv2RouterAreaList = append(ospfroot.SonicOspfv2tables.OSPFv2RouterArea.OSPFv2RouterAreaList, ospfarea)
+		case "OSPF_ROUTER_DISTRIBUTE":
+			ospfredist := node.(sonicmodel.OSPFv2RouterDistributeRoute)
+			ospfroot.SonicOspfv2tables.OSPFv2RouterDistributeRoute.OSPFv2RouterDistributeRouteList =
+				append(ospfroot.SonicOspfv2tables.OSPFv2RouterDistributeRoute.OSPFv2RouterDistributeRouteList, ospfredist)
 		}
 	}
 	return ospfroot
@@ -246,16 +256,23 @@ func StaticRouteIntergration(config map[string]interface{}) sonicmodel.SonicStat
 // distinguish interface type
 func AddressIntergration(context *Tcontext, config map[string]interface{}) {
 	var vlaniproot sonicmodel.VLANInterfaceIPAddrList
+	var loopbackiproot sonicmodel.LoopbackInterfacesIPAddrList
 	for key, config := range config {
 		childkey := strings.Split(key, "#")[1]
 		switch childkey {
 		case "VLAN_INTERFACE_IPADDR_LIST":
 			vlanipnode := config.(sonicmodel.VLANInterfaceIPAddr)
 			vlaniproot.VLANINTERFACEIPADDRLIST = append(vlaniproot.VLANINTERFACEIPADDRLIST, vlanipnode)
+		case "LOOPBACK_INTERFACE_IPADDR_LIST":
+			loopbackipnode := config.(sonicmodel.LoopbackInterfaceIPAddr)
+			loopbackiproot.LoopbackInterfaceIPAddrList = append(loopbackiproot.LoopbackInterfaceIPAddrList, loopbackipnode)
 		}
 	}
 	if len(vlaniproot.VLANINTERFACEIPADDRLIST) > 0 {
 		context.SonicConfig[basic.SONICVLANINTERFACEIPADDRKEY] = vlaniproot
+	}
+	if len(loopbackiproot.LoopbackInterfaceIPAddrList) > 0 {
+		context.SonicConfig[basic.SONICLOOPBACKINTERFACEIPADDRKEY] = loopbackiproot
 	}
 }
 

@@ -94,7 +94,9 @@ func init() {
 	Config_chain.SONICChainRegister(basic.OPERMERGE, basic.SONICVXLANKEY, ConfigSONICVxlan)
 	Config_chain.SONICChainRegister(basic.OPERMERGE, basic.SONICVRFKEY, ConfigSONICVrf)
 	Config_chain.SONICChainRegister(basic.OPERMERGE, basic.SONICVLANINTERFACEKEY, ConfigSONICVlanInterface)
+	Config_chain.SONICChainRegister(basic.OPERMERGE, basic.SONICLOOPBACKKEY, ConfigSONICLoopbackInterface)
 	Config_chain.SONICChainRegister(basic.OPERMERGE, basic.SONICVLANINTERFACEIPADDRKEY, ConfigSONICVlanInterfaceIPAddr)
+	Config_chain.SONICChainRegister(basic.OPERMERGE, basic.SONICLOOPBACKINTERFACEIPADDRKEY, ConfigSONICLoopbackInterfaceIPAddr)
 	Config_chain.SONICChainRegister(basic.OPERMERGE, basic.SONICOSPFKEY, ConfigSONICOSPFv2)
 	Config_chain.SONICChainRegister(basic.OPERMERGE, basic.SONICBGPKEY, ConfigSONICBGP)
 	Config_chain.SONICChainRegister(basic.OPERMERGE, basic.SONICROUTECOMMONKEY, ConfigSONICRouteCommon)
@@ -103,10 +105,12 @@ func init() {
 	Config_chain.SONICChainRegister(basic.OPERMERGE, basic.SONICROUTEMAPKEY, ConfigSONICRoutemap)
 	//sonic_config_chain.SONICChainRegister(basic.OPERMERGE, basic.SONICINDEX, SetIndexOfResouce)
 
+	//删除IP部分待实现
 	Config_chain.SONICChainRegister(basic.OPERREMOVE, basic.SONICVLANKEY, RemoveSONICVlan)
 	Config_chain.SONICChainRegister(basic.OPERREMOVE, basic.SONICVXLANKEY, RemoveSONICVxlan)
 	Config_chain.SONICChainRegister(basic.OPERREMOVE, basic.SONICVRFKEY, RemoveSONICVrf)
 	Config_chain.SONICChainRegister(basic.OPERREMOVE, basic.SONICVLANINTERFACEKEY, RemoveSONICVlanInterface)
+	Config_chain.SONICChainRegister(basic.OPERREMOVE, basic.SONICLOOPBACKKEY, RemoveSONICLoopbackInterface)
 	Config_chain.SONICChainRegister(basic.OPERREMOVE, basic.SONICVLANINTERFACEIPADDRKEY, RemoveSONICVlanInterfaceIPAddr)
 	Config_chain.SONICChainRegister(basic.OPERREMOVE, basic.SONICBGPKEY, RemoveSONICBGP)
 	Config_chain.SONICChainRegister(basic.OPERREMOVE, basic.SONICROUTECOMMONKEY, RemoveSONICRouteCommon)
@@ -237,6 +241,41 @@ func ConfigSONICVlanInterface(t *tcontext.Tcontext) error {
 	return nil
 }
 
+func ConfigSONICLoopbackInterface(t *tcontext.Tcontext) error {
+	urlsuffix := "/restconf/data/sonic-loopback-interface:sonic-loopback-interface/LOOPBACK_INTERFACE/LOOPBACK_INTERFACE_LIST"
+	loopbackinterfacedata := t.SonicConfig[basic.SONICLOOPBACKKEY].(sonicmodel.LoopbackInterfacesroot)
+	sonicloopbackinterface, err := json.Marshal(loopbackinterfacedata)
+	if err != nil {
+		glog.Errorf("loopback root marshal error:%s", err)
+		return err
+	}
+	b := bytes.NewBuffer(sonicloopbackinterface)
+	glog.Info("loopback interface config is sending")
+	rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, b)
+
+	err = ConfigHandlerResolve(rsp)
+	if err != nil {
+		return err
+	}
+	glog.Info("loopback interface config completed")
+	return nil
+}
+
+func RemoveSONICLoopbackInterface(t *tcontext.Tcontext) error {
+	loopbackinterfacedata := t.SonicConfig[basic.SONICLOOPBACKKEY].(sonicmodel.LoopbackInterfacesroot)
+	for _, v := range loopbackinterfacedata.LoopbackInterfaceList {
+		urlsuffix := fmt.Sprintf("/restconf/data/openconfig-interfaces:interfaces/interface=%s", v.LoIfName)
+		glog.Infof("loopback interface %s is deleting", v.LoIfName)
+		rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, nil)
+		err := DeleteHandlerResolve(rsp)
+		if err != nil {
+			return err
+		}
+		glog.Infof("loopback interface %s has deleted", v.LoIfName)
+	}
+	return nil
+}
+
 func RemoveSONICVlanInterface(t *tcontext.Tcontext) error {
 	vlaninterfacedata := t.SonicConfig[basic.SONICVLANINTERFACEKEY].(sonicmodel.VlanInterfaceroot)
 	for _, v := range vlaninterfacedata.SonicVLANInterface.VLAN_INTERFACE.VLAN_INTERFACE_LIST {
@@ -284,6 +323,41 @@ func RemoveSONICVlanInterfaceIPAddr(t *tcontext.Tcontext) error {
 		}
 		glog.Infof("vlan interface addr {%s} has deleted", v.VlanName)
 	}
+	return nil
+}
+
+func ConfigSONICLoopbackInterfaceIPAddr(t *tcontext.Tcontext) error {
+	urlsuffix := "/restconf/data/sonic-loopback-interface:sonic-loopback-interface/LOOPBACK_INTERFACE/LOOPBACK_INTERFACE_IPADDR_LIST"
+	loopbackinterfaceipdata := t.SonicConfig[basic.SONICLOOPBACKINTERFACEIPADDRKEY].(sonicmodel.LoopbackInterfacesIPAddrList)
+	sonicloopbackinterfaceips, err := json.Marshal(loopbackinterfaceipdata)
+	if err != nil {
+		glog.Errorf("LoopbackInterfacesIPAddrLists root marshal error:%s", err)
+		return err
+	}
+	b := bytes.NewBuffer(sonicloopbackinterfaceips)
+	glog.Info("loopback interface ip is sending")
+	rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, b)
+	err = ConfigHandlerResolve(rsp)
+	if err != nil {
+		return err
+	}
+	glog.Info("loopback interface ip has completed")
+	return nil
+}
+
+func RemoveSONICLoopbackInterfaceIPAddr(t *tcontext.Tcontext) error {
+	// urlsuffix := "/restconf/data/sonic-vlan-interface:sonic-vlan-interface/VLAN_INTERFACE/VLAN_INTERFACE_IPADDR_LIST"
+	// vlaninterfaceipdata := t.SonicConfig[basic.SONICVLANINTERFACEIPADDRKEY].(sonicmodel.VlanInterfaceroot)
+	// for _, v := range vlaninterfaceipdata.SonicVLANInterface.VLAN_INTERFACE.VLAN_INTERFACE_LIST {
+	// 	urlsuffix = fmt.Sprintf("/restconf/data/openconfig-interfaces:interfaces/interface=%s/openconfig-vlan:routed-vlan/openconfig-if-ip:ipv4/addresses", v.VlanName)
+	// 	glog.Infof("vlan interface addr {%s} is deleting", v.VlanName)
+	// 	rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, nil)
+	// 	err := DeleteHandlerResolve(rsp)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	glog.Infof("vlan interface addr {%s} has deleted", v.VlanName)
+	// }
 	return nil
 }
 
@@ -591,6 +665,25 @@ func ConfigSONICOSPFv2(t *tcontext.Tcontext) error {
 		return err
 	}
 	glog.Info("ospfv2 config data has completed")
+	return nil
+}
+
+func RemoveSONICOSPFv2(t *tcontext.Tcontext) error {
+	// urlsuffix := "/restconf/data/sonic-ospfv2:sonic-ospfv2"
+	// ospfv2data := t.SonicConfig[basic.SONICOSPFKEY].(sonicmodel.SonicOspfv2)
+	// sonicospfv2, err := json.Marshal(ospfv2data)
+	// if err != nil {
+	// 	glog.Errorf("bgp root marshal error:%s", err)
+	// 	return err
+	// }
+	// b := bytes.NewBuffer(sonicospfv2)
+	glog.Info("ospfv2 config data is deleting")
+	// rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, b)
+	// err = ConfigHandlerResolve(rsp)
+	// if err != nil {
+	// 	return err
+	// }
+	glog.Info("ospfv2 config data has deleted")
 	return nil
 }
 
