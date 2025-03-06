@@ -74,7 +74,7 @@ func ParseConfigRequest(node *xmlquery.Node) (*tcontext.Tcontext, *tcontext.Tcon
 	if topNode == nil {
 		return nil, nil, errors.New("[Missing data] Need top element. Complete configuration retrival currently not supported")
 	}
-	if topNode.SelectAttr("nc:operation") == basic.OPERMERGE {
+	if topNode.SelectAttr("nc:operation") == basic.OPERMERGE || topNode.SelectAttr("xc:operation") == basic.OPERMERGE {
 		addc.Messageid = messageid
 		addc.Operation = basic.OPERMERGE
 		containers := xmlquery.Find(topNode, "./*")
@@ -82,7 +82,7 @@ func ParseConfigRequest(node *xmlquery.Node) (*tcontext.Tcontext, *tcontext.Tcon
 		device.Devicehdl.Decode(featuremap, &addc)
 		delc.Err = errors.New("no remove feature")
 		return &addc, &delc, nil
-	} else if topNode.SelectAttr("nc:operation") == basic.OPERREMOVE {
+	} else if topNode.SelectAttr("nc:operation") == basic.OPERREMOVE || topNode.SelectAttr("xc:operation") == basic.OPERREMOVE {
 		delc.Messageid = messageid
 		delc.Operation = basic.OPERREMOVE
 		containers := xmlquery.Find(topNode, "./*")
@@ -94,7 +94,7 @@ func ParseConfigRequest(node *xmlquery.Node) (*tcontext.Tcontext, *tcontext.Tcon
 	containers := xmlquery.Find(topNode, "./*")
 	var addlist, dellist []*xmlquery.Node
 	for _, feature := range containers {
-		operation := feature.SelectAttr("nc:operation")
+		operation := feature.SelectAttr("nc:operation") + feature.SelectAttr("xc:operation")
 		if operation == "" || operation == basic.OPERMERGE {
 			addlist = append(addlist, feature)
 		} else if operation == basic.OPERREMOVE {

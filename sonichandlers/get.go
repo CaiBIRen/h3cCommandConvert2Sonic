@@ -167,7 +167,6 @@ func GetSONICVlanInterfaceIPByName(VLANName string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	fmt.Println("aaa++", rsp.Responese)
 	if rsp.Responese != nil {
 		err := mapstructure.Decode(rsp.Responese, &vlaninterfaceips)
 		if err != nil {
@@ -182,8 +181,40 @@ func GetSONICVlanInterfaceIPByName(VLANName string) (string, error) {
 	return "", errors.New(basic.RESOURCENOTFOUND)
 }
 
+func GetOSPFInstancesByDescription(description string) (string, error) {
+	var ospfrouters sonicmodel.Get_SonicOspfv2Router
+	urlsuffix := "/restconf/data/sonic-ospfv2:sonic-ospfv2/OSPFV2_ROUTER"
+	rsp := httpclient.SONICCLENT.SendSonicRequest("get", urlsuffix, nil)
+	err := GetHandlerResolve(rsp)
+	if err != nil {
+		return "", err
+	}
+	if rsp.Responese != nil {
+		err := mapstructure.Decode(rsp.Responese, &ospfrouters)
+		if err != nil {
+			return "", err
+		}
+		for _, v := range ospfrouters.OSPFv2Router.OSPFv2RouterList {
+			if v.Description == description {
+				return v.VrfName, nil
+			}
+		}
+	}
+	return "", errors.New(basic.RESOURCENOTFOUND)
+}
+
 func GetSONICVlanInterfaceByName(Name string) error {
 	urlsuffix := fmt.Sprintf("/restconf/data/sonic-vlan-interface:sonic-vlan-interface/VLAN_INTERFACE/VLAN_INTERFACE_LIST=%s", Name)
+	rsp := httpclient.SONICCLENT.SendSonicRequest("get", urlsuffix, nil)
+	err := GetHandlerResolve(rsp)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func GetSONICLoopbackInterfaceByName(Name string) error {
+	urlsuffix := fmt.Sprintf("/restconf/data/sonic-loopback-interface:sonic-loopback-interface/LOOPBACK_INTERFACE/LOOPBACK_INTERFACE_LIST=%s", Name)
 	rsp := httpclient.SONICCLENT.SendSonicRequest("get", urlsuffix, nil)
 	err := GetHandlerResolve(rsp)
 	if err != nil {
@@ -207,6 +238,16 @@ func GetSONICRoutepolicySetPrefixList(t *tcontext.Tcontext) error {
 	// 	fmt.Println("++", asnroot)
 	// 	t.SonicConfig[basic.SONICBGPKEY] = asnroot
 	// }
+	return nil
+}
+
+func GetSONICVRFByName(Name string) error {
+	urlsuffix := fmt.Sprintf("/restconf/data/sonic-vrf:sonic-vrf/VRF/VRF_LIST=%s", Name)
+	rsp := httpclient.SONICCLENT.SendSonicRequest("get", urlsuffix, nil)
+	err := GetHandlerResolve(rsp)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 

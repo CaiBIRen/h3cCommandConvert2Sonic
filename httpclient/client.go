@@ -54,7 +54,7 @@ func NewClient() {
 	client := &http.Client{
 		Transport: tr,
 	}
-	// basicurl := "https://10.246.144.12:8443"
+	// basicurl := "https://10.246.144.30:8443"
 	basicurl := "https://localhost:443"
 
 	SONICCLENT = &SonicHttpClient{

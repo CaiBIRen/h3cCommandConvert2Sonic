@@ -55,3 +55,22 @@ func ViperMutexWriteConfig(name string, value string) {
 	viper.Set(name, value)
 	viper.WriteConfig()
 }
+
+func ViperSetKeyValue2Cache(name string, value string) {
+	ServiceConfiguration.Configmux.Lock()
+	defer ServiceConfiguration.Configmux.Unlock()
+	viper.Set(name, value)
+}
+
+func ViperGetValueFromCache(name string) string {
+	ServiceConfiguration.Configmux.Lock()
+	defer ServiceConfiguration.Configmux.Unlock()
+	value := viper.GetString(name)
+	return value
+}
+
+// func ViperUnsetKeyValue2Cache(name string) interface{} {
+// 	ServiceConfiguration.Configmux.Lock()
+// 	defer ServiceConfiguration.Configmux.Unlock()
+// }
+

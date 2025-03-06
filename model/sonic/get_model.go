@@ -147,6 +147,16 @@ type SonicRoutingPolicyPrefixList struct {
 	PrefixLists []PrefixList `json:"sonic-routing-policy-sets:PREFIX_LIST" mapstructure:"sonic-routing-policy-sets:PREFIX_LIST"`
 }
 
+type SonicRoutingPolicySetList struct {
+	Get_RoutePolicyMaps []Get_RouteMap `json:"sonic-route-map:ROUTE_MAP_LIST" mapstructure:"sonic-route-map:ROUTE_MAP_LIST"`
+}
+
+type Get_RouteMap struct {
+	RouteMapName   string `json:"route_map_name" mapstructure:"route_map_name"`
+	StmtName       int    `json:"stmt_name" mapstructure:"stmt_name"`
+	RouteOperation string `json:"route_operation" mapstructure:"route_operation"`
+}
+
 // 定义VLAN_INTERFACE_LIST元素的结构体
 type Get_VLANInterface struct {
 	VlanName string `json:"vlanName" mapstructure:"vlanName"`
@@ -166,4 +176,22 @@ type Get_VLANInterfaceIP struct {
 // 定义包含VLAN_INTERFACE_LIST的顶层结构体
 type Get_VLANInterfaceListIPs struct {
 	VLAN_INTERFACE_LIST_IP []Get_VLANInterfaceIP `json:"sonic-vlan-interface:VLAN_INTERFACE_IPADDR_LIST" mapstructure:"sonic-vlan-interface:VLAN_INTERFACE_IPADDR_LIST"`
+}
+
+// 定义OSPFV2_ROUTER_LIST元素的结构体
+type Get_OSPFv2Router struct {
+	Description string `json:"description" mapstructure:"description"`
+	Enable      bool   `json:"enable" mapstructure:"enable"`
+	RouterID    string `json:"router-id" mapstructure:"router-id"`
+	VrfName     string `json:"vrf_name" mapstructure:"vrf_name"`
+}
+
+// 定义包含OSPFV2_ROUTER_LIST的结构体
+type Get_OSPFv2Routers struct {
+	OSPFv2RouterList []Get_OSPFv2Router `json:"OSPFV2_ROUTER_LIST" mapstructure:"OSPFV2_ROUTER_LIST"`
+}
+
+// 顶层结构体
+type Get_SonicOspfv2Router struct {
+	OSPFv2Router Get_OSPFv2Routers `json:"sonic-ospfv2:OSPFV2_ROUTER" mapstructure:"sonic-ospfv2:OSPFV2_ROUTER"`
 }

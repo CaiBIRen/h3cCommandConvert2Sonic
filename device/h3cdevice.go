@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sonic-unis-framework/basic"
 	"sonic-unis-framework/configuration"
+	"sonic-unis-framework/model"
 	h3cmodel "sonic-unis-framework/model/h3c"
 	sonicmodel "sonic-unis-framework/model/sonic"
 	sonichandlers "sonic-unis-framework/sonichandlers"
@@ -25,32 +26,6 @@ const (
 	IF_L2GE_TYPE = "19"
 	IF_LAG_TYPE  = "56"
 )
-
-func CreateFeaturemap(configmap map[string]map[string]interface{}, str ...string) {
-	for _, v := range str {
-		if _, ok := configmap[v]; !ok {
-			configmap[v] = make(map[string]interface{})
-		}
-	}
-}
-
-// For scenarios where indexes need to be queried, such as when there is a list type in the attribute, data needs to be added to the list incrementally
-func IndexQueryContext(configmap map[string]map[string]interface{}, key string, childkey string) bool {
-	node := configmap[key]
-	if _, ok := node[childkey]; !ok {
-		return false
-	} else {
-		return true
-	}
-}
-
-func Parameters2Index(parameters ...string) string {
-	var res string
-	for _, param := range parameters {
-		res += param + "@"
-	}
-	return strings.TrimSuffix(res, "@")
-}
 
 func (h3c H3cdevice) Role() string {
 	configuration.ServiceConfiguration.Configmux.RLock()
@@ -184,13 +159,13 @@ func (h3c H3cdevice) IntegrationReply(c *tcontext.Tcontext) (string, error) {
 			dataxml += OutputLineBreak(output)
 		case "LLDP":
 			lldpdata := v.(h3cmodel.LLDP)
-			if h3c.Role() == "Leaf" {
-				configuration.ServiceConfiguration.Configmux.RLock()
-				if len(configuration.ServiceConfiguration.Serverlldps) > 0 {
-					lldpdata.LLDPNeighbors.LLDPNeighbor = append(lldpdata.LLDPNeighbors.LLDPNeighbor, configuration.ServiceConfiguration.Serverlldps...)
-				}
-				configuration.ServiceConfiguration.Configmux.RUnlock()
-			}
+			// if h3c.Role() == "Leaf" {
+			// 	configuration.ServiceConfiguration.Configmux.RLock()
+			// 	if len(configuration.ServiceConfiguration.Serverlldps) > 0 {
+			// 		lldpdata.LLDPNeighbors.LLDPNeighbor = append(lldpdata.LLDPNeighbors.LLDPNeighbor, configuration.ServiceConfiguration.Serverlldps...)
+			// 	}
+			// 	configuration.ServiceConfiguration.Configmux.RUnlock()
+			// }
 			output, err := xml.MarshalIndent(lldpdata, "", "  ")
 			if err != nil {
 				return "", err
@@ -224,28 +199,34 @@ func (h3c H3cdevice) IntegrationReply(c *tcontext.Tcontext) (string, error) {
 
 }
 
-func OutputLineBreak(output []byte) string {
-	return string(output) + "\n"
-}
-
 // go struct to  sonic
 func (h3c H3cdevice) EncodeMerge(c *tcontext.Tcontext) error {
-	//元数据配置
-	if _, ok := c.Features["L2VPN"]; ok {
-		err := L2vpnEncodeMerge(c)
-		if err != nil {
-			return err
-		}
-	}
+	// //元数据配置
+	// if _, ok := c.Features["L2VPN"]; ok {
+	// 	err := L2vpnEncodeMerge(c)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// }
 
-	if _, ok := c.Features["L3vpn"]; ok {
-		err := L3vpnEncodeMerge(c)
-		if err != nil {
-			return err
-		}
-	}
+	// if _, ok := c.Features["L3vpn"]; ok {
+	// 	err := L3vpnEncodeMerge(c)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// }
 	for k, _ := range c.Features {
 		switch k {
+		case "L2VPN":
+			err := L2vpnEncodeMerge(c)
+			if err != nil {
+				return err
+			}
+		case "L3vpn":
+			err := L3vpnEncodeMerge(c)
+			if err != nil {
+				return err
+			}
 		case "BGP":
 			err := BGPEncodeMerge(c)
 			if err != nil {
@@ -281,6 +262,8 @@ func (h3c H3cdevice) EncodeMerge(c *tcontext.Tcontext) error {
 			if err != nil {
 				return err
 			}
+		default:
+			return errors.New("this feature not support merge yet")
 		}
 	}
 	c.DiscreteConfigurationIntegration()
@@ -323,7 +306,13 @@ func (h3c H3cdevice) EncodeRemove(c *tcontext.Tcontext) error {
 			// 	if err != nil {
 			// 		return err
 			// 	}
-
+		case "OSPF":
+			err := OSPFEncodeRemove(c)
+			if err != nil {
+				return err
+			}
+		default:
+			return errors.New("this feature not support remove yet")
 		}
 	}
 	c.DiscreteConfigurationIntegration()
@@ -356,7 +345,7 @@ func (h3c H3cdevice) EncodeGet(featuremap map[string]*xmlquery.Node, c *tcontext
 			}
 		//
 		case "BGP":
-			err := BGPEncodeGET(c)
+			err := BGPEncodeGET(v, c)
 			if err != nil {
 				return err
 			}
@@ -390,21 +379,37 @@ func (h3c H3cdevice) EncodeAction(c *tcontext.Tcontext) error {
 	return nil
 }
 
-func BGPEncodeGET(c *tcontext.Tcontext) error {
-	err := sonichandlers.GetSONICBGPInstance(c)
-	if err != nil {
-		return err
+/*{Publib Operation method}
+
+==================================================================================================================================
+==================================================================================================================================
+
+{以下为具体feature的相关实现}*/
+
+func BGPEncodeGET(node *xmlquery.Node, c *tcontext.Tcontext) error {
+	Instance := xmlquery.FindOne(node, "//Instance")
+	if Instance != nil {
+		err := sonichandlers.GetSONICBGPInstance(c)
+		if err != nil {
+			return err
+		}
+		if v, ok := c.SonicConfig[basic.SONICBGPKEY]; ok {
+			sonicbgp := v.(sonicmodel.BGPGlobalConfigASN)
+			var bgpnode h3cmodel.BGP
+			var instancenode h3cmodel.Instance
+			var instances h3cmodel.Instances
+			basic.DefaultBGPLocalasn = sonicbgp.LocalASN
+			instancenode.ASNumber = strconv.Itoa(sonicbgp.LocalASN)
+			instances.Items = append(instances.Items, instancenode)
+			bgpnode.Instances = &instances
+			c.Features["BGP"] = bgpnode
+			return nil
+		}
+		glog.Error("BGP_EncodeGET assert failed")
+		return errors.New("BGP_EncodeGET assert failed")
+
 	}
-	if v, ok := c.SonicConfig[basic.SONICBGPKEY].(sonicmodel.BGPGlobalConfigASN); ok {
-		var bgpnode h3cmodel.BGP
-		var instancenode h3cmodel.Instance
-		instancenode.ASNumber = strconv.Itoa(v.LocalASN)
-		bgpnode.Instances.Items = append(bgpnode.Instances.Items, instancenode)
-		c.Features["BGP"] = bgpnode
-		return nil
-	}
-	glog.Error("BGP_EncodeGET assert failed")
-	return errors.New("BGP_EncodeGET assert failed")
+	return nil
 }
 
 func LAGGEncodeGET(node *xmlquery.Node, c *tcontext.Tcontext) error {
@@ -531,6 +536,8 @@ func LLDPEncodeGET(c *tcontext.Tcontext) error {
 }
 
 func IfmgrEncodeGET(node *xmlquery.Node, c *tcontext.Tcontext) error {
+
+	//search a specific interface
 	ifname := xmlquery.FindOne(node, "//Name")
 	if ifname != nil && ifname.InnerText() != "" {
 		Intname := ifname.InnerText()
@@ -548,28 +555,44 @@ func IfmgrEncodeGET(node *xmlquery.Node, c *tcontext.Tcontext) error {
 			ifmgrnode.Interfaces = &ifmgrinterfaces
 			c.Features["Ifmgr"] = ifmgrnode
 			return nil
+		} else if strings.HasPrefix(Intname, "Loop") || strings.HasPrefix(Intname, "loop") {
+			var ifmgrnode h3cmodel.Ifmgr
+			var ifmgrinterfaces h3cmodel.Interfaces
+			err := sonichandlers.GetSONICLoopbackInterfaceByName(Intname)
+			if err != nil {
+				return nil
+			}
+			ifinterface := h3cmodel.Interface{IfIndex: Intname, Name: Intname}
+			ifmgrinterfaces.Interface = append(ifmgrinterfaces.Interface, ifinterface)
+			ifmgrnode.Interfaces = &ifmgrinterfaces
+			c.Features["Ifmgr"] = ifmgrnode
+			return nil
 		}
 	}
+
+	//search by type
 	iftypenode := xmlquery.FindOne(node, "//ifTypeExt")
-	innertext := iftypenode.InnerText()
-	switch innertext {
-	case IF_L2GE_TYPE:
-		err := sonichandlers.GetSONICPort(c)
-		if err != nil {
-			return err
-		}
-		err = Ifmgr_IF_L2GE_TYPE(c)
-		if err != nil {
-			return err
-		}
-	case IF_LAG_TYPE:
-		err := sonichandlers.GetSONICPortChannelList(c)
-		if err != nil {
-			return err
-		}
-		err = Ifmgr_IF_L3GE_TYPE(c)
-		if err != nil {
-			return err
+	if iftypenode != nil {
+		innertext := iftypenode.InnerText()
+		switch innertext {
+		case IF_L2GE_TYPE:
+			err := sonichandlers.GetSONICPort(c)
+			if err != nil {
+				return err
+			}
+			err = Ifmgr_IF_L2GE_TYPE(c)
+			if err != nil {
+				return err
+			}
+		case IF_LAG_TYPE:
+			err := sonichandlers.GetSONICPortChannelList(c)
+			if err != nil {
+				return err
+			}
+			err = Ifmgr_IF_L3GE_TYPE(c)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -687,7 +710,8 @@ func IfmgrEncodeAction(c *tcontext.Tcontext) error {
 
 			//vlan-interface
 			vlaninterfacenode := sonicmodel.VlanInterface{
-				VlanName: vlannode.Name,
+				VlanName:             vlannode.Name,
+				Ipv6UseLinkLocalOnly: "disable",
 			}
 			vlanroot.SonicVLAN.VLAN.VLANList = append(vlanroot.SonicVLAN.VLAN.VLANList, vlannode)
 			vlaninterfaceroot.SonicVLANInterface.VLAN_INTERFACE.VLAN_INTERFACE_LIST = append(
@@ -724,6 +748,9 @@ func IfmgrEncodeAction(c *tcontext.Tcontext) error {
 					return err
 				}
 			} else {
+				if err = sonichandlers.ConfigSONICLoopBack(loopbackinterfacenode.LoIfName); err != nil {
+					return err
+				}
 				if err = sonichandlers.ConfigSONICLoopbackInterface(c); err != nil {
 					return err
 				}
@@ -753,7 +780,7 @@ func OSPFRedistProtocolTrans(protocol int) (string, error) {
 	case 6:
 		return "BGP", nil
 	}
-	return "", errors.New("Unrecognized protocol type")
+	return "", errors.New("unrecognized protocol type")
 }
 
 func GetOSPFVrf(c *tcontext.Tcontext, Name string) (string, error) {
@@ -764,7 +791,7 @@ func GetOSPFVrf(c *tcontext.Tcontext, Name string) (string, error) {
 			return node.VrfName, nil
 		}
 	}
-	return "", errors.New("The request does not contain the ospf instance configuration before configuring other tables")
+	return "", errors.New("the request does not contain the ospf instance configuration before configuring other tables")
 }
 
 func OSPFEncodeMerge(c *tcontext.Tcontext) error {
@@ -775,7 +802,6 @@ func OSPFEncodeMerge(c *tcontext.Tcontext) error {
 		glog.Error("OSPF data assert failed")
 		return errors.New("OSPF data assert failed")
 	}
-	//vlan + vlaninterface + vxlanmapping
 	CreateFeaturemap(c.DiscreteConfiguration, basic.SONICOSPFKEY)
 	if len(data.Instances.Instance) > 0 {
 		for _, v := range data.Instances.Instance {
@@ -821,7 +847,7 @@ func OSPFEncodeMerge(c *tcontext.Tcontext) error {
 				ospfinterfacenode.AreaID = v.IfEnable.AreaId
 				ospfinterfacenode.Enable = true
 				ospfinterfacenode.NetworkType = networktype
-				ipprefix, err := sonichandlers.GetSONICVlanInterfaceIPByName("Vlan900")
+				ipprefix, err := sonichandlers.GetSONICVlanInterfaceIPByName(ospfinterfacenode.Name)
 				if err != nil {
 					glog.Errorf("vlan %s interface ip not config,can not config ospf", vlanid)
 					return errors.New("the interface has not been configured with an IP")
@@ -849,6 +875,39 @@ func OSPFEncodeMerge(c *tcontext.Tcontext) error {
 			ospfredistributenode.Protocol = protocol
 			ospfredistributeindex := Parameters2Index(v.Name, protocol) + basic.SONICOSPFREDISTELELMENT
 			c.DiscreteConfiguration[basic.SONICOSPFKEY][ospfredistributeindex] = ospfredistributenode
+		}
+	}
+	return nil
+}
+
+func OSPFEncodeRemove(c *tcontext.Tcontext) error {
+	glog.Info("enter ospfv2 remove encoding")
+	ospf := c.Features["OSPF"]
+	data, ok := ospf.(h3cmodel.OSPF)
+	if !ok {
+		glog.Error("OSPF data assert failed")
+		return errors.New("OSPF data assert failed")
+	}
+	CreateFeaturemap(c.DiscreteConfiguration, basic.SONICOSPFKEY)
+	if len(data.Instances.Instance) > 0 {
+		for _, v := range data.Instances.Instance {
+			if v.Name == "" {
+				return errors.New("ospf instance index element missing")
+			}
+			description := "OSPF_Name" + v.Name
+			//需要先查询VRF
+			vrfname, err := sonichandlers.GetOSPFInstancesByDescription(description)
+			if err != nil {
+				if err.Error() == basic.RESOURCENOTFOUND {
+					return nil
+				} else {
+					return err
+				}
+			}
+			//真正走删除流程
+			ospfrouternode := sonicmodel.OSPFv2Router{VrfName: vrfname}
+			ospfinstanceindex := Parameters2Index(v.Name) + basic.SONICOSPFINSTANCEELELMENT
+			c.DiscreteConfiguration[basic.SONICOSPFKEY][ospfinstanceindex] = ospfrouternode
 		}
 	}
 	return nil
@@ -933,7 +992,7 @@ func L3vpnEncodeMerge(c *tcontext.Tcontext) error {
 	if !ok {
 		return errors.New("L3vpn data assert failed")
 	}
-	CreateFeaturemap(c.DiscreteConfiguration, basic.SONICVRFKEY, basic.SONICVLANINTERFACEKEY, basic.SONICBGPKEY)
+	CreateFeaturemap(c.DiscreteConfiguration, basic.SONICVRFKEY, basic.SONICVLANINTERFACEKEY, basic.SONICBGPKEY, basic.SONICLOOPBACKKEY)
 	if len(data.L3vpnVRF.VRFs) > 0 {
 		for _, v := range data.L3vpnVRF.VRFs {
 			v.VRF = VrfNameFormat(v.VRF)
@@ -941,15 +1000,17 @@ func L3vpnEncodeMerge(c *tcontext.Tcontext) error {
 			if err != nil {
 				return err
 			}
-			vrfnode := VrfOrganize(v.VRF, 0)
+			vrfnode := sonicmodel.Vrf{VrfName: v.VRF}
 			vrfindex := Parameters2Index(vrfnode.VrfName) + basic.SONICVRFELEMENT
 			c.DiscreteConfiguration[basic.SONICVRFKEY][vrfindex] = vrfnode
-			if v.RD != "" {
-				var bgpafnode sonicmodel.BgpGlobalsAFList
-				var bgpglobalnode sonicmodel.BgpGlobalsList
 
+			var bgpafnode sonicmodel.BgpGlobalsAFList
+			var bgpglobalnode sonicmodel.BgpGlobalsList
+
+			if v.RD != "" {
 				bgpglobalindex := Parameters2Index(v.VRF) + basic.SONICBGPGLOBALELEMENT
 				bgpglobalnode.VrfName = v.VRF
+				bgpglobalnode.LocalASN = basic.DefaultBGPLocalasn
 				c.DiscreteConfiguration[basic.SONICBGPKEY][bgpglobalindex] = bgpglobalnode
 
 				bgpafindex := Parameters2Index(v.VRF, "l2vpn_evpn") + basic.SONICBGPGLOBALAFELEMENT
@@ -959,6 +1020,36 @@ func L3vpnEncodeMerge(c *tcontext.Tcontext) error {
 					bgpafnode = BgpGlobalsAfOrganize(v.VRF, 4, "L3vpn")
 				}
 				bgpafnode.RouteDistinguisher = v.RD
+				c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex] = bgpafnode
+			}
+			if v.Ipv4ImportRoutePolicy != "" {
+				bgpafindex := Parameters2Index(v.VRF, "ipv4_unicast") + basic.SONICBGPGLOBALAFELEMENT
+				if IndexQueryContext(c.DiscreteConfiguration, basic.SONICBGPKEY, bgpafindex) {
+					bgpafnode = c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex].(sonicmodel.BgpGlobalsAFList)
+				} else {
+					bgpafnode = BgpGlobalsAfOrganize(v.VRF, 4, "L3vpn")
+				}
+				bgpafnode.ImportVRFRouteMap = v.Ipv4ImportRoutePolicy
+				c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex] = bgpafnode
+			}
+			if v.Ipv6ImportRoutePolicy != "" {
+				bgpafindex := Parameters2Index(v.VRF, "ipv6_unicast") + basic.SONICBGPGLOBALAFELEMENT
+				if IndexQueryContext(c.DiscreteConfiguration, basic.SONICBGPKEY, bgpafindex) {
+					bgpafnode = c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex].(sonicmodel.BgpGlobalsAFList)
+				} else {
+					bgpafnode = BgpGlobalsAfOrganize(v.VRF, 4, "L3vpn")
+				}
+				bgpafnode.ImportVRFRouteMap = v.Ipv6ImportRoutePolicy
+				c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex] = bgpafnode
+			}
+			if v.EVPNImportRoutePolicy != "" {
+				bgpafindex := Parameters2Index(v.VRF, "l2vpn_evpn") + basic.SONICBGPGLOBALAFELEMENT
+				if IndexQueryContext(c.DiscreteConfiguration, basic.SONICBGPKEY, bgpafindex) {
+					bgpafnode = c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex].(sonicmodel.BgpGlobalsAFList)
+				} else {
+					bgpafnode = BgpGlobalsAfOrganize(v.VRF, 4, "L3vpn")
+				}
+				bgpafnode.ImportVRFRouteMap = v.EVPNImportRoutePolicy
 				c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex] = bgpafnode
 			}
 		}
@@ -1000,12 +1091,12 @@ func L3vpnEncodeMerge(c *tcontext.Tcontext) error {
 				vlan_interface_node := sonicmodel.VlanInterface{VlanName: "Vlan" + ifidx, VrfName: v.VRF}
 				vlaninterfaceindex := Parameters2Index(vlan_interface_node.VlanName) + basic.SONICVLANINTERFACEELEMENT
 				c.DiscreteConfiguration[basic.SONICVLANINTERFACEKEY][vlaninterfaceindex] = vlan_interface_node
-			} else if strings.Contains(v.IfIndex, "Loopback") || strings.Contains(v.IfIndex, "loopback") {
+			} else if strings.Contains(v.IfIndex, "Loop") || strings.Contains(v.IfIndex, "loop") {
 				ifidx, err := GetInterfaceString(v.IfIndex)
 				if err != nil {
 					return err
 				}
-				loopback_interface_node := sonicmodel.LoopbackInterface{LoIfName: "Loopback" + ifidx, VrfName: v.VRF}
+				loopback_interface_node := sonicmodel.LoopbackInterface{LoIfName: "Loopback" + ifidx, VrfName: &v.VRF}
 				loopbackinterfaceindex := Parameters2Index(loopback_interface_node.LoIfName) + basic.SONICLOOPBACKINTERFACEELEMENT
 				c.DiscreteConfiguration[basic.SONICLOOPBACKKEY][loopbackinterfaceindex] = loopback_interface_node
 			}
@@ -1071,7 +1162,13 @@ func L3vpnEncodeRemove(c *tcontext.Tcontext) error {
 			if err != nil {
 				return err
 			}
-			//sonic删除vrf前需要将其他引用配置清理干净{主要是接口下的引用}
+			//sonic删除vrf前需要将其他引用配置清理干净
+			//1-BGP
+			bgpglobalnode := sonicmodel.BgpGlobalsList{VrfName: v.VRF}
+			bgpglobalindex := Parameters2Index(v.VRF) + basic.SONICBGPGLOBALELEMENT
+			c.DiscreteConfiguration[basic.SONICBGPKEY][bgpglobalindex] = bgpglobalnode
+
+			//删除VRF
 			vrfnode := sonicmodel.Vrf{VrfName: v.VRF}
 			vrfindex := Parameters2Index(vrfnode.VrfName) + basic.SONICVRFELEMENT
 			c.DiscreteConfiguration[basic.SONICVRFKEY][vrfindex] = vrfnode
@@ -1126,7 +1223,7 @@ func BGPEncodeMerge(c *tcontext.Tcontext) error {
 				return errors.New("bgp vrf index missing")
 			}
 			bgpglobalindex := Parameters2Index(v.VRF) + basic.SONICBGPGLOBALELEMENT
-			bgpglobalnode := sonicmodel.BgpGlobalsList{VrfName: v.VRF}
+			bgpglobalnode := sonicmodel.BgpGlobalsList{VrfName: v.VRF, LocalASN: basic.DefaultBGPLocalasn}
 			c.DiscreteConfiguration[basic.SONICBGPKEY][bgpglobalindex] = bgpglobalnode
 		}
 	}
@@ -1164,7 +1261,11 @@ func BGPEncodeMerge(c *tcontext.Tcontext) error {
 			if IndexQueryContext(c.DiscreteConfiguration, basic.SONICROUTECOMMONKEY, redistributeindex) {
 				continue
 			}
+
 			redistributenode := sonicmodel.RouteRedistributenode{VrfName: v.VRF, AddrFamily: bgpfamliy, SrcProtocol: protocol, DstProtocol: "bgp"}
+			if v.RoutePolicy != "" {
+				redistributenode.RouteMap = append(redistributenode.RouteMap, v.RoutePolicy)
+			}
 			c.DiscreteConfiguration[basic.SONICROUTECOMMONKEY][redistributeindex] = redistributenode
 		}
 	}
@@ -1247,7 +1348,7 @@ func RoutePolicyEncodeMerge(c *tcontext.Tcontext) error {
 	BGP := c.Features["RoutePolicy"]
 	data, ok := BGP.(h3cmodel.RoutePolicy)
 	if !ok {
-		return errors.New("Routepolicy data translate failed")
+		return errors.New("routepolicy data translate failed")
 	}
 	CreateFeaturemap(c.DiscreteConfiguration, basic.SONICROUTEMAPKEY, basic.SONICROUTEMAPSETKEY)
 
@@ -1329,7 +1430,7 @@ func RoutePolicyEncodeMerge(c *tcontext.Tcontext) error {
 				routemapnode.MatchIPv6PrefixSet = v.Match.IPv6AddressPrefixList
 			}
 			if v.Match.Tag != 0 {
-				routemapnode.MatchTag = v.Match.Tag
+				routemapnode.MatchTag = append(routemapnode.MatchTag, v.Match.Tag)
 			}
 			if v.Apply.LocalPreference != 0 {
 				routemapnode.SetLocalPref = v.Apply.LocalPreference
@@ -1343,6 +1444,11 @@ func RoutePolicyEncodeMerge(c *tcontext.Tcontext) error {
 				routemapnode.SetNextHop = v.ApplyIpv4NextHop.NextHopAddr
 			}
 			c.DiscreteConfiguration[basic.SONICROUTEMAPKEY][policyindex] = routemapnode
+
+			//需要单独声明route-policy
+			policysetindex := Parameters2Index(v.PolicyName) + basic.SONICROUTEMAPSETELELMENT
+			routemapsetnode := sonicmodel.RoutemapsetEntry{Name: v.PolicyName}
+			c.DiscreteConfiguration[basic.SONICROUTEMAPKEY][policysetindex] = routemapsetnode
 		}
 	}
 	return nil
@@ -1352,7 +1458,7 @@ func RoutePolicyEncodeRemove(c *tcontext.Tcontext) error {
 	BGP := c.Features["RoutePolicy"]
 	data, ok := BGP.(h3cmodel.RoutePolicy)
 	if !ok {
-		return errors.New("Routepolicy data translate failed")
+		return errors.New("routepolicy data translate failed")
 	}
 	CreateFeaturemap(c.DiscreteConfiguration, basic.SONICROUTEMAPKEY, basic.SONICROUTEMAPSETKEY)
 
@@ -1395,27 +1501,6 @@ func RoutePolicyEncodeRemove(c *tcontext.Tcontext) error {
 			}
 			routemapnode := sonicmodel.RouteMapEntry{RouteMapName: v.PolicyName, StmtName: v.Index,
 				RouteOperation: opreation}
-
-			if v.Match.IPv4AddressPrefixList != "" {
-				routemapnode.MatchPrefixSet = v.Match.IPv4AddressPrefixList
-			}
-			if v.Match.IPv6AddressPrefixList != "" {
-				routemapnode.MatchIPv6PrefixSet = v.Match.IPv6AddressPrefixList
-			}
-			if v.Match.Tag != 0 {
-				routemapnode.MatchTag = v.Match.Tag
-			}
-			if v.Apply.LocalPreference != 0 {
-				routemapnode.SetLocalPref = v.Apply.LocalPreference
-			}
-			if v.Apply.IPv6NextHop != "" {
-				routemapnode.SetIPv6NextHopGlobal = v.Apply.IPv6NextHop
-				routemapnode.SetIPv6NextHopPreferGlobal = true
-			}
-
-			if v.ApplyIpv4NextHop.NextHopAddr != "" {
-				routemapnode.SetNextHop = v.ApplyIpv4NextHop.NextHopAddr
-			}
 			c.DiscreteConfiguration[basic.SONICROUTEMAPKEY][policyindex] = routemapnode
 		}
 	}
@@ -1563,7 +1648,7 @@ func IPV4ADDRESSEncodeMerge(c *tcontext.Tcontext) error {
 				}
 				c.DiscreteConfiguration[basic.SONICADDRESS][addressindex] = ipv4addressnode
 			}
-			if strings.Contains(v.IfIndex, "Loopback") || strings.Contains(v.IfIndex, "loopback") {
+			if strings.Contains(v.IfIndex, "Loop") || strings.Contains(v.IfIndex, "loop") {
 				loopbackid, _ := GetInterfaceString(v.IfIndex)
 				prefix := MaskToPrefix(v.Ipv4Mask)
 				cidr := v.Ipv4Address + "/" + prefix
@@ -1655,9 +1740,12 @@ func IfmgrEncodeMerge(c *tcontext.Tcontext) error {
 			}
 			//接口类型分类
 			if strings.Contains(v.IfIndex, "Vlan") || strings.Contains(v.IfIndex, "vlan") {
+				var macnode model.Mac_interface
 				vlanid, _ := GetInterfaceString(v.IfIndex)
+				macnode.Ifname = "Vlan" + vlanid
+				macnode.Mac = v.MAC
 				interfaceindex := Parameters2Index("Vlan"+vlanid) + basic.SONICINTERFACEMACELEMENT
-				c.DiscreteConfiguration[basic.SONICINTERFACEMAC][interfaceindex] = true
+				c.DiscreteConfiguration[basic.SONICINTERFACEMAC][interfaceindex] = macnode
 			}
 		}
 	}
@@ -1796,13 +1884,14 @@ func VlanListOrganize(id int, mtu int) sonicmodel.VLANNode {
 	return vlan
 }
 
-func VrfOrganize(name string, vni int) sonicmodel.Vrf {
-	var vrf sonicmodel.Vrf
-	vrf.VrfName = name
-	vrf.Vni = vni
-	vrf.Fallback = false
-	return vrf
-}
+// func VrfOrganize(name string, vni int) sonicmodel.Vrf {
+// 	var vrf sonicmodel.Vrf
+// 	vrf.VrfName = name
+// 	vrf.Vni = vni
+// 	vrf.Fallback = false
+// 	return vrf
+// }
+
 func VxlanTunnelMapOrganize(vlan, vni int) sonicmodel.VxlanTunnelMap {
 	var vxlantunnel sonicmodel.VxlanTunnelMap
 	vxlantunnel.Name = basic.TUNNELNAME
@@ -1837,6 +1926,36 @@ func BgpGlobalsAfOrganize(vrf string, afi_sfi int, feature string) sonicmodel.Bg
 		}
 	}
 	return bgpglobalafnode
+}
+
+func CreateFeaturemap(configmap map[string]map[string]interface{}, str ...string) {
+	for _, v := range str {
+		if _, ok := configmap[v]; !ok {
+			configmap[v] = make(map[string]interface{})
+		}
+	}
+}
+
+// For scenarios where indexes need to be queried, such as when there is a list type in the attribute, data needs to be added to the list incrementally
+func IndexQueryContext(configmap map[string]map[string]interface{}, key string, childkey string) bool {
+	node := configmap[key]
+	if _, ok := node[childkey]; !ok {
+		return false
+	} else {
+		return true
+	}
+}
+
+func Parameters2Index(parameters ...string) string {
+	var res string
+	for _, param := range parameters {
+		res += param + "@"
+	}
+	return strings.TrimSuffix(res, "@")
+}
+
+func OutputLineBreak(output []byte) string {
+	return string(output) + "\n"
 }
 
 // { ↑所有设备数据在这解析好,直接把数据丢给sonic处理↑  }

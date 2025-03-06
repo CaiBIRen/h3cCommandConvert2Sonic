@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"sonic-unis-framework/basic"
 	"sonic-unis-framework/httpclient"
+	"sonic-unis-framework/model"
 	sonicmodel "sonic-unis-framework/model/sonic"
 	"sonic-unis-framework/redisclient"
 	"sonic-unis-framework/tcontext"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/coreos/pkg/capnslog"
 	"github.com/mitchellh/mapstructure"
+	"github.com/vishvananda/netlink"
 )
 
 var glog = capnslog.NewPackageLogger("sonic-unis-framework", "SONIC_CONFIG")
@@ -42,27 +45,33 @@ var MERGE_FEATURE_ORDER_LIST = []string{
 	basic.SONICVLANKEY,
 	basic.SONICVXLANKEY,
 	basic.SONICVRFKEY,
-	basic.SONICBGPKEY,
 	basic.SONICVLANINTERFACEKEY,
 	basic.SONICVLANINTERFACEIPADDRKEY,
+	basic.SONICLOOPBACKKEY,
+	basic.SONICLOOPBACKINTERFACEIPADDRKEY,
+	basic.SONICROUTEMAPSETKEY,
+	basic.SONICROUTEMAPKEY,
+	basic.SONICBGPKEY,
 	basic.SONICOSPFKEY,
 	basic.SONICROUTECOMMONKEY,
 	basic.SONICSTATICROUTEKEY,
-	basic.SONICROUTEMAPSETKEY,
-	basic.SONICROUTEMAPKEY,
+	basic.SONICINTERFACEMAC,
 }
 
 var REMOVE_FEATURE_ORDER_LIST = []string{
+	basic.SONICROUTECOMMONKEY,
 	basic.SONICROUTEMAPKEY,
 	basic.SONICROUTEMAPSETKEY,
 	basic.SONICSTATICROUTEKEY,
-	basic.SONICROUTECOMMONKEY,
 	basic.SONICVLANINTERFACEIPADDRKEY,
 	basic.SONICVLANINTERFACEKEY,
+	basic.SONICLOOPBACKINTERFACEIPADDRKEY,
+	basic.SONICLOOPBACKKEY,
+	basic.SONICOSPFKEY,
 	basic.SONICBGPKEY,
-	basic.SONICVRFKEY,
 	basic.SONICVXLANKEY,
 	basic.SONICVLANKEY,
+	basic.SONICVRFKEY,
 }
 
 type Handler func(t *tcontext.Tcontext) error
@@ -103,6 +112,7 @@ func init() {
 	Config_chain.SONICChainRegister(basic.OPERMERGE, basic.SONICSTATICROUTEKEY, ConfigSONICStaticRoute)
 	Config_chain.SONICChainRegister(basic.OPERMERGE, basic.SONICROUTEMAPSETKEY, ConfigSONICRoutemapSet)
 	Config_chain.SONICChainRegister(basic.OPERMERGE, basic.SONICROUTEMAPKEY, ConfigSONICRoutemap)
+	Config_chain.SONICChainRegister(basic.OPERMERGE, basic.SONICINTERFACEMAC, ConfigSONICInterfaceMacInKernel)
 	//sonic_config_chain.SONICChainRegister(basic.OPERMERGE, basic.SONICINDEX, SetIndexOfResouce)
 
 	//删除IP部分待实现
@@ -112,6 +122,7 @@ func init() {
 	Config_chain.SONICChainRegister(basic.OPERREMOVE, basic.SONICVLANINTERFACEKEY, RemoveSONICVlanInterface)
 	Config_chain.SONICChainRegister(basic.OPERREMOVE, basic.SONICLOOPBACKKEY, RemoveSONICLoopbackInterface)
 	Config_chain.SONICChainRegister(basic.OPERREMOVE, basic.SONICVLANINTERFACEIPADDRKEY, RemoveSONICVlanInterfaceIPAddr)
+	Config_chain.SONICChainRegister(basic.OPERREMOVE, basic.SONICOSPFKEY, RemoveSONICOSPFv2)
 	Config_chain.SONICChainRegister(basic.OPERREMOVE, basic.SONICBGPKEY, RemoveSONICBGP)
 	Config_chain.SONICChainRegister(basic.OPERREMOVE, basic.SONICROUTECOMMONKEY, RemoveSONICRouteCommon)
 	Config_chain.SONICChainRegister(basic.OPERREMOVE, basic.SONICSTATICROUTEKEY, RemoveSONICStaticRoute)
@@ -143,10 +154,31 @@ func SonicRemoveConfigHandlers(t *tcontext.Tcontext) (bool, error) {
 	return true, nil
 }
 
-func SetIndexOfResouce(t *tcontext.Tcontext) error {
-	data := t.SonicConfig[basic.SONICINDEX].(map[string]int)
-	for k, v := range data {
-		redisclient.IndexSet(k, v)
+// 暂不设置索引
+// func SetIndexOfResouce(t *tcontext.Tcontext) error {
+// 	data := t.SonicConfig[basic.SONICINDEX].(map[string]int)
+// 	for k, v := range data {
+// 		redisclient.IndexSet(k, v)
+// 	}
+// 	return nil
+// }
+
+func ConfigSONICInterfaceMacInKernel(t *tcontext.Tcontext) error {
+	macdata := t.SonicConfig[basic.SONICINTERFACEMAC].(model.Mac_interface_list)
+	for _, v := range macdata.Mac_interfaces {
+		link, err := netlink.LinkByName(v.Ifname)
+		if err != nil {
+			return err
+		}
+		mac, err := net.ParseMAC(v.Mac)
+		if err != nil {
+			return err
+		}
+		err = netlink.LinkSetHardwareAddr(link, mac)
+		if err != nil {
+			glog.Errorf("netlink set interface %s mac failed,err:%s", v.Ifname, err.Error())
+			return err
+		}
 	}
 	return nil
 }
@@ -250,7 +282,7 @@ func ConfigSONICLoopbackInterface(t *tcontext.Tcontext) error {
 		return err
 	}
 	b := bytes.NewBuffer(sonicloopbackinterface)
-	glog.Info("loopback interface config is sending")
+	glog.Infof("loopback interface config is sending,data: %s", b.String())
 	rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, b)
 
 	err = ConfigHandlerResolve(rsp)
@@ -300,7 +332,7 @@ func ConfigSONICVlanInterfaceIPAddr(t *tcontext.Tcontext) error {
 		return err
 	}
 	b := bytes.NewBuffer(sonicvlaninterface)
-	glog.Info("vlan interface ip is sending")
+	glog.Infof("vlan interface ip is sending,data %s", b.String())
 	rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, b)
 	err = ConfigHandlerResolve(rsp)
 	if err != nil {
@@ -386,13 +418,13 @@ func RemoveSONICVrf(t *tcontext.Tcontext) error {
 	vrfdata := t.SonicConfig[basic.SONICVRFKEY].(sonicmodel.Vrfroot)
 	for _, v := range vrfdata.SonicVrf.VRF.VRF_LIST {
 		urlsuffix := fmt.Sprintf("/restconf/data/sonic-vrf:sonic-vrf/VRF/VRF_LIST=%s", v.VrfName)
-		glog.Info("vrf {%s} is deleting", v.VrfName)
+		glog.Infof("vrf {%s} is deleting", v.VrfName)
 		rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, nil)
 		err := DeleteHandlerResolve(rsp)
 		if err != nil {
 			return err
 		}
-		glog.Info("vrf {%s} has deleted", v.VrfName)
+		glog.Infof("vrf {%s} has deleted", v.VrfName)
 	}
 	return nil
 }
@@ -417,8 +449,8 @@ func ConfigSONICBGP(t *tcontext.Tcontext) error {
 }
 
 func RemoveSONICBGP(t *tcontext.Tcontext) error {
-	bgprootdata := t.SonicConfig[basic.SONICBGPKEY].(sonicmodel.SonicBGPGlobal)
-	for _, v := range bgprootdata.BGP_GLOBALS.BGP_GLOBALS_LIST {
+	bgprootdata := t.SonicConfig[basic.SONICBGPKEY].(sonicmodel.BGProot)
+	for _, v := range bgprootdata.Sonicbgpglobal.BGP_GLOBALS.BGP_GLOBALS_LIST {
 		urlsuffix := fmt.Sprintf("/restconf/data/sonic-bgp-global:sonic-bgp-global/BGP_GLOBALS/BGP_GLOBALS_LIST=%s", v.VrfName)
 		rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, nil)
 		err := DeleteHandlerResolve(rsp)
@@ -426,7 +458,7 @@ func RemoveSONICBGP(t *tcontext.Tcontext) error {
 			return err
 		}
 	}
-	for _, v := range bgprootdata.BGP_GLOBALS_AF.BGP_GLOBALS_AF_LIST {
+	for _, v := range bgprootdata.Sonicbgpglobal.BGP_GLOBALS_AF.BGP_GLOBALS_AF_LIST {
 		if len(v.ImportRTS) > 0 || len(v.ExportRTS) > 0 {
 			for _, vv := range v.ImportRTS {
 				urlsuffix := fmt.Sprintf("/restconf/data/sonic-bgp-global:sonic-bgp-global/BGP_GLOBALS_AF/BGP_GLOBALS_AF_LIST=%s,%s/import-rts=%s", v.VrfName, v.AFISAFI, vv)
@@ -515,6 +547,7 @@ func ConfigSONICRoutemapSet(t *tcontext.Tcontext) error {
 
 func RemoveSONICRoutemapSet(t *tcontext.Tcontext) error {
 	//先查询Prefixlist
+	//因为要获取删除所需要的字段
 	var Prefixlist sonicmodel.SonicRoutingPolicyPrefixList
 	rsp := httpclient.SONICCLENT.SendSonicRequest("get", "/restconf/data/sonic-routing-policy-sets:sonic-routing-policy-sets/PREFIX/PREFIX_LIST", nil)
 	err := GetHandlerResolve(rsp)
@@ -581,15 +614,15 @@ func RemoveSONICRoutemapSet(t *tcontext.Tcontext) error {
 }
 
 func ConfigSONICRoutemap(t *tcontext.Tcontext) error {
-	urlsuffix := "/restconf/data/sonic-route-map:sonic-route-map/ROUTE_MAP"
-	routemapdata := t.SonicConfig[basic.SONICROUTEMAPKEY].(sonicmodel.SonicRouteMap)
+	urlsuffix := "/restconf/data/sonic-route-map:sonic-route-map"
+	routemapdata := t.SonicConfig[basic.SONICROUTEMAPKEY].(sonicmodel.SonicRoutemaproot)
 	sonicroutemap, err := json.Marshal(routemapdata)
 	if err != nil {
 		glog.Errorf("bgp root marshal error:%s", err)
 		return err
 	}
 	b := bytes.NewBuffer(sonicroutemap)
-	glog.Info("route map config data sending")
+	glog.Infof("route map config data sending,data %s", b.String())
 	rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, b)
 	err = ConfigHandlerResolve(rsp)
 	if err != nil {
@@ -600,8 +633,12 @@ func ConfigSONICRoutemap(t *tcontext.Tcontext) error {
 }
 
 func RemoveSONICRoutemap(t *tcontext.Tcontext) error {
-	routemapdata := t.SonicConfig[basic.SONICROUTEMAPKEY].(sonicmodel.SonicRouteMap)
-	for _, v := range routemapdata.RouteMap.RouteMapList {
+	var AllDelete bool
+	existmap1 := make(map[string]bool)
+	existmap2 := make(map[string]bool)
+
+	routemapdata := t.SonicConfig[basic.SONICROUTEMAPKEY].(sonicmodel.SonicRoutemaproot)
+	for _, v := range routemapdata.SonicRouteMap.RouteMap.RouteMapList {
 		urlsuffix := fmt.Sprintf("/restconf/data/sonic-route-map:sonic-route-map/ROUTE_MAP/ROUTE_MAP_LIST=%s,%d", v.RouteMapName, v.StmtName)
 		glog.Infof("route map {%s} {%d} is deleting", v.RouteMapName, v.StmtName)
 		rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, nil)
@@ -609,7 +646,59 @@ func RemoveSONICRoutemap(t *tcontext.Tcontext) error {
 		if err != nil {
 			return err
 		}
+		existmap1[v.RouteMapName] = true
 		glog.Infof("route map {%s} {%d} has deleted", v.RouteMapName, v.StmtName)
+	}
+
+	//如果routemapset下面没有子元素 则可以删除route-policy-Set
+	var Routemaplist sonicmodel.SonicRoutingPolicySetList
+	urlsuffix := "/restconf/data/sonic-route-map:sonic-route-map/ROUTE_MAP_LIST"
+	rsp := httpclient.SONICCLENT.SendSonicRequest("get", urlsuffix, nil)
+	err := GetHandlerResolve(rsp)
+	if err != nil {
+		glog.Errorf("get route map list to cachedata error:%s", err)
+		return err
+	}
+	if rsp.Responese != nil {
+		err := mapstructure.Decode(rsp.Responese, &Routemaplist)
+		if err != nil {
+			return err
+		}
+	} else {
+		//all existmap1 need to  delete
+		// return nil
+		AllDelete = true
+	}
+
+	if AllDelete {
+		for k, _ := range existmap1 {
+			urlsuffix := fmt.Sprintf("/restconf/data/sonic-route-map:sonic-route-map/ROUTE_MAP_SET/ROUTE_MAP_SET_LIST=%s", k)
+			glog.Infof("route policy set {%s} is deleting", k)
+			rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, nil)
+			err := DeleteHandlerResolve(rsp)
+			if err != nil {
+				return err
+			}
+			glog.Infof("route policy set {%s} ahs deleted", k)
+		}
+		return nil
+	}
+
+	for _, v := range Routemaplist.Get_RoutePolicyMaps {
+		existmap2[v.RouteMapName] = true
+	}
+
+	for k, _ := range existmap1 {
+		if _, ok := existmap2[k]; !ok {
+			urlsuffix := fmt.Sprintf("/restconf/data/sonic-route-map:sonic-route-map/ROUTE_MAP_SET/ROUTE_MAP_SET_LIST=%s", k)
+			glog.Infof("route policy set {%s} is deleting", k)
+			rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, nil)
+			err := DeleteHandlerResolve(rsp)
+			if err != nil {
+				return err
+			}
+			glog.Infof("route policy set {%s} has deleted", k)
+		}
 	}
 	return nil
 }
@@ -658,7 +747,7 @@ func ConfigSONICOSPFv2(t *tcontext.Tcontext) error {
 		return err
 	}
 	b := bytes.NewBuffer(sonicospfv2)
-	glog.Info("ospfv2 config data sending")
+	glog.Infof("ospfv2 config data sending,data %s", b.String())
 	rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, b)
 	err = ConfigHandlerResolve(rsp)
 	if err != nil {
@@ -669,21 +758,17 @@ func ConfigSONICOSPFv2(t *tcontext.Tcontext) error {
 }
 
 func RemoveSONICOSPFv2(t *tcontext.Tcontext) error {
-	// urlsuffix := "/restconf/data/sonic-ospfv2:sonic-ospfv2"
-	// ospfv2data := t.SonicConfig[basic.SONICOSPFKEY].(sonicmodel.SonicOspfv2)
-	// sonicospfv2, err := json.Marshal(ospfv2data)
-	// if err != nil {
-	// 	glog.Errorf("bgp root marshal error:%s", err)
-	// 	return err
-	// }
-	// b := bytes.NewBuffer(sonicospfv2)
-	glog.Info("ospfv2 config data is deleting")
-	// rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, b)
-	// err = ConfigHandlerResolve(rsp)
-	// if err != nil {
-	// 	return err
-	// }
-	glog.Info("ospfv2 config data has deleted")
+	ospfdata := t.SonicConfig[basic.SONICOSPFKEY].(sonicmodel.SonicOspfv2)
+	for _, v := range ospfdata.SonicOspfv2tables.OSPFv2Router.OSPFv2RouterList {
+		urlsuffix := fmt.Sprintf("/restconf/data/sonic-ospfv2:sonic-ospfv2/OSPFV2_ROUTER/OSPFV2_ROUTER_LIST=%s", v.VrfName)
+		glog.Infof("ospf router {%s} is deleting", v.VrfName)
+		rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, nil)
+		err := DeleteHandlerResolve(rsp)
+		if err != nil {
+			return err
+		}
+		glog.Infof("ospf router {%s} has deleted", v.VrfName)
+	}
 	return nil
 }
 
@@ -755,4 +840,28 @@ func SaveIndexToRedis(t *tcontext.Tcontext, key string) {
 			redisclient.IndexSet(k, v)
 		}
 	}
+}
+
+//单独调用配置 目前在华三中没有这块的配置
+//{配置loopback接口之前先声明loopback id实例}
+
+func ConfigSONICLoopBack(loopbackname string) error {
+	urlsuffix := "/restconf/data/sonic-loopback:sonic-loopback/LOOPBACK/LOOPBACK_LIST"
+	loopbacknode := sonicmodel.Loopback{Name: loopbackname}
+	var loopbackroot sonicmodel.SonicLoopback
+	loopbackroot.LoopbackList = append(loopbackroot.LoopbackList, loopbacknode)
+	sonicvlan, err := json.Marshal(loopbackroot)
+	if err != nil {
+		glog.Errorf("loopback root marshal error:%s", err)
+		return err
+	}
+	b := bytes.NewBuffer(sonicvlan)
+	glog.Info("loopback config is sending")
+	rsp := httpclient.SONICCLENT.SendSonicRequest(basic.OPERMERGE, urlsuffix, b)
+	err = ConfigHandlerResolve(rsp)
+	if err != nil {
+		return err
+	}
+	glog.Info("loopback config send completed")
+	return nil
 }

@@ -16,7 +16,6 @@ import (
 
 	"github.com/antchfx/xmlquery"
 	"github.com/coreos/pkg/capnslog"
-	"github.com/spf13/viper"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -431,9 +430,10 @@ func GetContextID(request string) (string, error) {
 		return "", errors.New("[Proxyvfw] get context name error")
 	}
 
-	configuration.ServiceConfiguration.Configmux.RLock()
-	contextid := viper.GetString(nameNode.Data)
-	configuration.ServiceConfiguration.Configmux.RUnlock()
+	// configuration.ServiceConfiguration.Configmux.RLock()
+	// contextid := viper.GetString(nameNode.Data)
+	// configuration.ServiceConfiguration.Configmux.RUnlock()
+	contextid := configuration.ViperGetValueFromCache(nameNode.Data)
 
 	var context h3cmodel.Context
 	err = xml.Unmarshal([]byte(contextNode.OutputXML(true)), &context)
@@ -463,8 +463,7 @@ func ContextIDSave(request string) error {
 	if nameNode == nil {
 		return errors.New("[Proxyvfw] get context name error")
 	}
-
-	configuration.ViperMutexWriteConfig(nameNode.InnerText(), contextIDNode.InnerText())
+	configuration.ViperSetKeyValue2Cache(nameNode.InnerText(), contextIDNode.InnerText())
 	return nil
 }
 

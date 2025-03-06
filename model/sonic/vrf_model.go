@@ -3,7 +3,7 @@ package sonicmodel
 // 定义 VRF 列表中的元素结构体
 type Vrf struct {
     VrfName  string `json:"vrf_name,omitempty"`
-    Fallback bool   `json:"fallback,omitempty"`
+    // Fallback *bool   `json:"fallback,omitempty"`
     Vni      int    `json:"vni,omitempty"`
 }
 

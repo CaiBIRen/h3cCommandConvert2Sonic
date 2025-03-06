@@ -55,6 +55,10 @@ func (context *Tcontext) DiscreteConfigurationIntegration() error {
 			glog.Info("VlanInterface Intergration")
 			vlaninterfaceroot := VlanInterfaceIntergration(configurations)
 			context.SonicConfig[basic.SONICVLANINTERFACEKEY] = vlaninterfaceroot
+		case basic.SONICLOOPBACKKEY:
+			glog.Info("LoopbackInterface Intergration")
+			loopbackinterfaceroot := LoopbackInterfaceIntergration(configurations)
+			context.SonicConfig[basic.SONICLOOPBACKKEY] = loopbackinterfaceroot
 		case basic.SONICROUTECOMMONKEY:
 			glog.Info("Route Common Intergration")
 			routecommonroot := RouteCommonIntergration(configurations)
@@ -72,7 +76,8 @@ func (context *Tcontext) DiscreteConfigurationIntegration() error {
 			AddressIntergration(context, configurations)
 		case basic.SONICINTERFACEMAC:
 			glog.Info("interface mac Intergration")
-			MACIntergration(context, configurations)
+			macroot := MACIntergration(configurations)
+			context.SonicConfig[basic.SONICINTERFACEMAC] = macroot
 		case basic.SONICROUTEMAPSETKEY:
 			routemapsetroot := RoutemapSetIntergration(configurations)
 			context.SonicConfig[basic.SONICROUTEMAPSETKEY] = routemapsetroot
@@ -112,14 +117,17 @@ func OSPFv2Intergration(config map[string]interface{}) sonicmodel.SonicOspfv2 {
 	return ospfroot
 }
 
-func RoutemapIntergration(config map[string]interface{}) sonicmodel.SonicRouteMap {
-	var routemaproot sonicmodel.SonicRouteMap
+func RoutemapIntergration(config map[string]interface{}) sonicmodel.SonicRoutemaproot {
+	var routemaproot sonicmodel.SonicRoutemaproot
 	for key, node := range config {
 		childkey := strings.Split(key, "#")[1]
 		switch childkey {
 		case "ROUTE_MAP":
 			routemap := node.(sonicmodel.RouteMapEntry)
-			routemaproot.RouteMap.RouteMapList = append(routemaproot.RouteMap.RouteMapList, routemap)
+			routemaproot.SonicRouteMap.RouteMap.RouteMapList = append(routemaproot.SonicRouteMap.RouteMap.RouteMapList, routemap)
+		case "ROUTE_MAP_SET":
+			routemapset := node.(sonicmodel.RoutemapsetEntry)
+			routemaproot.SonicRouteMap.RoutemapSet.RoutemapsetList = append(routemaproot.SonicRouteMap.RoutemapSet.RoutemapsetList, routemapset)
 		}
 	}
 	return routemaproot
@@ -193,6 +201,19 @@ func VlanInterfaceIntergration(config map[string]interface{}) sonicmodel.VlanInt
 		}
 	}
 	return vlaninterfaceroot
+}
+
+func LoopbackInterfaceIntergration(config map[string]interface{}) sonicmodel.LoopbackInterfacesroot {
+	var loopinterfaceroot sonicmodel.LoopbackInterfacesroot
+	for key, node := range config {
+		childkey := strings.Split(key, "#")[1]
+		switch childkey {
+		case "LOOPBACK_INTERFACE":
+			loopinterface := node.(sonicmodel.LoopbackInterface)
+			loopinterfaceroot.LoopbackInterfaceList = append(loopinterfaceroot.LoopbackInterfaceList, loopinterface)
+		}
+	}
+	return loopinterfaceroot
 }
 
 func VrfIntergration(config map[string]interface{}) sonicmodel.Vrfroot {
@@ -277,16 +298,11 @@ func AddressIntergration(context *Tcontext, config map[string]interface{}) {
 }
 
 // netlink
-func MACIntergration(context *Tcontext, config map[string]interface{}) {
-	var maclist model.Mac_interface_list
-	for k, _ := range config {
-		elements := strings.Split(k, "@")
-		var macnode model.Mac_interface
-		macnode.Ifname = elements[0]
-		macnode.Mac = elements[1]
-		maclist.Mac_interfaces = append(maclist.Mac_interfaces, macnode)
+func MACIntergration(config map[string]interface{}) model.Mac_interface_list {
+	var macroot model.Mac_interface_list
+	for _, value := range config {
+		macnode := value.(model.Mac_interface)
+		macroot.Mac_interfaces = append(macroot.Mac_interfaces, macnode)
 	}
-	if len(maclist.Mac_interfaces) > 0 {
-		context.SonicConfig[basic.SONICINTERFACEMAC] = maclist
-	}
+	return macroot
 }

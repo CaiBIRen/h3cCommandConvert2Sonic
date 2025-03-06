@@ -9,6 +9,7 @@ import (
 var glog = capnslog.NewPackageLogger("sonic-unis-framework", "BASIC")
 var DefaultUser string = "admin"
 var DefaultPassword string = "YourPaSsWoRd"
+var DefaultBGPLocalasn = 64515
 var DefaultSuccess int = 204
 var DefaultHttpErrorCode = 1000
 var VLANBASE = 700
@@ -64,6 +65,7 @@ var (
 	SONICIPV4PREFIXSETELEMENT           = "#IPV4_PREFIX_SET"
 	SONICIPV6PREFIXSETELEMENT           = "#IPV6_PREFIX_SET"
 	SONICPREFIXNODEELEMENT              = "#PREFIX_NODE"
+	SONICROUTEMAPSETELELMENT            = "#ROUTE_MAP_SET"
 	SONICROUTEMAPELELMENT               = "#ROUTE_MAP"
 	SONICOSPFINTERFACEELELMENT          = "#OSPF_INTERFACE"
 	SONICOSPFINSTANCEELELMENT           = "#OSPF_Router"

@@ -1,7 +1,20 @@
 package sonicmodel
 
+type SonicRoutemaproot struct {
+	SonicRouteMap SonicRouteMap `json:"sonic-route-map:sonic-route-map"`
+}
+
 type SonicRouteMap struct {
-	RouteMap RouteMap `json:"sonic-route-map:ROUTE_MAP"`
+	RoutemapSet Routemapset `json:"ROUTE_MAP_SET"`
+	RouteMap    RouteMap    `json:"ROUTE_MAP"`
+}
+
+type Routemapset struct {
+	RoutemapsetList []RoutemapsetEntry `json:"ROUTE_MAP_SET_LIST"`
+}
+
+type RoutemapsetEntry struct {
+	Name string `json:"name"`
 }
 
 // RouteMap contains a list of route map entries.
@@ -16,7 +29,7 @@ type RouteMapEntry struct {
 	RouteOperation              string `json:"route_operation"`
 	MatchPrefixSet              string `json:"match_prefix_set,omitempty"`
 	MatchIPv6PrefixSet          string `json:"match_ipv6_prefix_set,omitempty"`
-	MatchTag                    int    `json:"match_tag,omitempty"`
+	MatchTag                    []int  `json:"match_tag,omitempty"`
 	MatchEvpnDefaultType5Route  bool   `json:"match_evpn_default_type5_route,omitempty"`
 	MatchEvpnAdvertiseRouteType string `json:"match_evpn_advertise_route_type,omitempty"`
 	MatchEvpnVniNumber          int    `json:"match_evpn_vni_number,omitempty"`

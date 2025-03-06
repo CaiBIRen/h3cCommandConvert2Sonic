@@ -1,5 +1,5 @@
 cb3b5ff3922bb259682aefcf3ed30a87  lib/systemd/system/sonic-unis-framework.service
-8ca55d11544103da8349ada3494a55fd  usr/local/bin/sonic-unis-framework
+551db4df0ec5ea498da92dfb07d5a818  usr/local/bin/sonic-unis-framework
 7adc482b53e43ad70f212a806df808da  usr/share/doc/sonic-unis-framework/README.Debian
 6b7ac7165123e4fff28d4ac765e42d28  usr/share/doc/sonic-unis-framework/changelog.gz
 0c43ffe93d5767c1d4d5ea98d350e220  usr/share/doc/sonic-unis-framework/copyright

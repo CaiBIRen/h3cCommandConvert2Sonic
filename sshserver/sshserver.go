@@ -15,6 +15,7 @@ import (
 	"github.com/coreos/pkg/capnslog"
 	"github.com/creack/pty"
 	sshsrv "github.com/gliderlabs/ssh"
+	"github.com/spf13/viper"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/terminal"
 )
@@ -68,9 +69,9 @@ func SessionHandler(s sshsrv.Session) {
 				Doresponse(s, UserView)
 			} else if strings.HasPrefix(requestStr, "switchto context") {
 				vfwname := strings.Split(requestStr, " ")[2]
-				info, err := FindVfwInfo(vfwname)
+				info, err := FindSetVfwInfo(vfwname)
 				if err != nil {
-					Doresponse(s, "vfw not exist")
+					Doresponse(s, "no vfw can be used for export")
 				} else {
 					go ConnectVfw(info, s, ClientRequestChan, ConnectStatusChan, CloseVfwSubChan)
 					//阻塞等待返回连接结果
@@ -85,6 +86,8 @@ func SessionHandler(s sshsrv.Session) {
 				}
 				//TODO:GNS模拟器中vfw删除流程思考
 			} else if strings.Contains(requestStr, "undo context") {
+				vfwname := strings.Split(requestStr, " ")[2]
+				FindUnsetVrfInfo(vfwname)
 				Doresponse(s, SystemView)
 			} else if requestStr == "Y" {
 				Doresponse(s, SystemView)
@@ -102,7 +105,7 @@ func SessionHandler(s sshsrv.Session) {
 	glog.Infof("client ssh session close %s", s.RemoteAddr().String())
 }
 
-func ConnectVfw(info *configuration.Vfwinfo, cs sshsrv.Session, rc chan []byte, csc chan int, clc chan struct{}) {
+func ConnectVfw(info configuration.Vfwinfo, cs sshsrv.Session, rc chan []byte, csc chan int, clc chan struct{}) {
 	ctx, cancel := context.WithCancel(context.Background())
 	config := &ssh.ClientConfig{
 		User: info.Username,
@@ -233,15 +236,54 @@ func DosshRecover(s sshsrv.Session) {
 	}
 }
 
-func FindVfwInfo(name string) (*configuration.Vfwinfo, error) {
+func FindSetVfwInfo(name string) (configuration.Vfwinfo, error) {
+	var Writeconfig bool
+	var vinfo configuration.Vfwinfo
+	configuration.ServiceConfiguration.Configmux.RLock()
+	defer configuration.ServiceConfiguration.Configmux.RUnlock()
+	for k, v := range configuration.ServiceConfiguration.Vfws {
+		//Find a vfw of the corresponding exit or unused vfirewall info
+		if v.Name == name {
+			vinfo = v
+			break
+		}
+		if v.Name == "" {
+			Writeconfig = true
+			configuration.ServiceConfiguration.Vfws[k].Name = name
+			vinfo = configuration.ServiceConfiguration.Vfws[k]
+			break
+		}
+	}
+	if Writeconfig {
+		viper.Set("Vfws", configuration.ServiceConfiguration.Vfws)
+		viper.WriteConfig()
+		glog.Info("config vfws info changed")
+	}
+	if vinfo.IP != "" {
+		return vinfo, nil
+	} else {
+		return vinfo, errors.New("vfw not exist")
+	}
+}
+
+// 清理资源
+// 将vfwinfo与export信息解绑
+func FindUnsetVrfInfo(name string) {
+	var Writeconfig bool
 	configuration.ServiceConfiguration.Configmux.RLock()
 	defer configuration.ServiceConfiguration.Configmux.RUnlock()
 	for _, v := range configuration.ServiceConfiguration.Vfws {
+		//Find a vfw of the corresponding exit or unused vfirewall info
 		if v.Name == name {
-			return &v, nil
+			Writeconfig = true
+			v.Name = ""
+			break
 		}
 	}
-	return nil, errors.New("vfw not exist")
+	if Writeconfig {
+		viper.Set("vfws", configuration.ServiceConfiguration.Vfws)
+		glog.Info("config vfws info changed")
+	}
 }
 
 // func ReadChannelG(ctx context.Context, r io.Reader, cs sshsrv.Session, wg sync.WaitGroup) {
