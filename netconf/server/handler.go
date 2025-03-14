@@ -252,7 +252,6 @@ func ConfigRequestHandler(rootNode *xmlquery.Node) (string, error) {
 		glog.Errorf("[parse config request error] %v", err)
 		return "", err
 	}
-
 	var addrsp, delrsp bool = true, true
 	if delc.Err == nil {
 		err = device.Devicehdl.EncodeRemove(delc)
@@ -340,6 +339,8 @@ func doRecover(session ssh.Session, inputStr string) {
 
 		errorXML := createErrorXML(errors.New("unknown panic recover"))
 		writeResponse(session, CreateResponse(extractMessageId(inputStr), []byte(errorXML)))
+		//to peer release connection
+		session.Close()
 	}
 }
 

@@ -20,5 +20,4 @@ type RouteRedistributenode struct {
 	DstProtocol string   `json:"dst_protocol"`
 	AddrFamily  string   `json:"addr_family"`
 	RouteMap    []string `json:"route_map"`
-	Metric      int      `json:"metric"`
 }

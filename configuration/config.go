@@ -73,4 +73,3 @@ func ViperGetValueFromCache(name string) string {
 // 	ServiceConfiguration.Configmux.Lock()
 // 	defer ServiceConfiguration.Configmux.Unlock()
 // }
-

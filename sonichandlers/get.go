@@ -159,6 +159,29 @@ func GetSONICVlanInterface(t *tcontext.Tcontext) error {
 	return nil
 }
 
+func GetSONICVlanInterfacesByVrf(vrfname string) (sonicmodel.Get_VLANInterfaceList, error) {
+	var vlaninterfaces sonicmodel.Get_VLANInterfaceList
+	var vlanvrfinterfaces sonicmodel.Get_VLANInterfaceList
+	rsp := httpclient.SONICCLENT.SendSonicRequest("get", "/restconf/data/sonic-vlan-interface:sonic-vlan-interface/VLAN_INTERFACE/VLAN_INTERFACE_LIST", nil)
+	err := GetHandlerResolve(rsp)
+	if err != nil {
+		return vlanvrfinterfaces, err
+	}
+	if rsp.Responese != nil {
+		err := mapstructure.Decode(rsp.Responese, &vlaninterfaces)
+		if err != nil {
+			return vlanvrfinterfaces, err
+		}
+		for _, v := range vlaninterfaces.VLAN_INTERFACE_LIST {
+			if v.VrfName == vrfname {
+				vlanvrfinterfaces.VLAN_INTERFACE_LIST = append(vlanvrfinterfaces.VLAN_INTERFACE_LIST, v)
+			}
+		}
+		return vlanvrfinterfaces, nil
+	}
+	return vlanvrfinterfaces, errors.New(basic.RESOURCENOTFOUND)
+}
+
 func GetSONICVlanInterfaceIPByName(VLANName string) (string, error) {
 	var vlaninterfaceips sonicmodel.Get_VLANInterfaceListIPs
 	urlsuffix := "/restconf/data/sonic-vlan-interface:sonic-vlan-interface/VLAN_INTERFACE/VLAN_INTERFACE_IPADDR_LIST"
@@ -241,6 +264,49 @@ func GetSONICRoutepolicySetPrefixList(t *tcontext.Tcontext) error {
 	return nil
 }
 
+func GetStaticRoutebyVrf(vrfname string) (sonicmodel.Get_StaticRoutes, error) {
+	var staticroutes sonicmodel.Get_StaticRoutes
+	var vrfstaticroutes sonicmodel.Get_StaticRoutes
+	urlsuffix := "/restconf/data/sonic-static-route:sonic-static-route/STATIC_ROUTE/STATIC_ROUTE_LIST"
+	rsp := httpclient.SONICCLENT.SendSonicRequest("get", urlsuffix, nil)
+	err := GetHandlerResolve(rsp)
+	if err != nil {
+		return vrfstaticroutes, err
+	}
+	if rsp.Responese != nil {
+		err := mapstructure.Decode(rsp.Responese, &staticroutes)
+		if err != nil {
+			return vrfstaticroutes, err
+		}
+		for _, v := range staticroutes.StaticRouteList {
+			if v.VrfName == vrfname {
+				vrfstaticroutes.StaticRouteList = append(vrfstaticroutes.StaticRouteList, v)
+			}
+		}
+		return vrfstaticroutes, nil
+	}
+	return vrfstaticroutes, nil
+}
+
+func GetSONICL3vniByVrfname(vrfname string) (sonicmodel.Get_VniConfig, error) {
+	var l3vni sonicmodel.Get_VniConfig
+	urlsuffix := fmt.Sprintf("/restconf/data/sonic-vrf:sonic-vrf/VRF/VRF_LIST=%s/vni", vrfname)
+	rsp := httpclient.SONICCLENT.SendSonicRequest("get", urlsuffix, nil)
+	err := GetHandlerResolve(rsp)
+
+	if err != nil {
+		return l3vni, err
+	}
+	if rsp.Responese != nil {
+
+		err := mapstructure.Decode(rsp.Responese, &l3vni)
+		if err != nil {
+			return l3vni, err
+		}
+	}
+	return l3vni, nil
+}
+
 func GetSONICVRFByName(Name string) error {
 	urlsuffix := fmt.Sprintf("/restconf/data/sonic-vrf:sonic-vrf/VRF/VRF_LIST=%s", Name)
 	rsp := httpclient.SONICCLENT.SendSonicRequest("get", urlsuffix, nil)
@@ -261,7 +327,11 @@ func GetHandlerResolve(rsp *httpclient.SonicResp) error {
 			if rsperr == "" {
 				rsperr = rsp.ErrorMessage.SErrors.ErrorList[0].ErrorTag
 			}
-			errmsg := fmt.Sprintf("GET failed:%s", rsperr)
+			if rsperr == basic.RESOURCENOTFOUND {
+				glog.Error("resouce not found")
+				return errors.New(basic.RESOURCENOTFOUND)
+			}
+			errmsg := fmt.Sprintf("GET failed: %s", rsperr)
 			glog.Error(errmsg)
 			return errors.New(errmsg)
 		}

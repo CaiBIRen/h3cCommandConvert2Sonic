@@ -2,7 +2,7 @@ Package: sonic-unis-framework
 Version: 1.0
 Architecture: amd64
 Maintainer: unknown <alex@unknown>
-Installed-Size: 9228
+Installed-Size: 9248
 Depends: libc6 (>= 2.3.4)
 Section: unknown
 Priority: optional

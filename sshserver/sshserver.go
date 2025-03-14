@@ -75,20 +75,46 @@ func SessionHandler(s sshsrv.Session) {
 				} else {
 					go ConnectVfw(info, s, ClientRequestChan, ConnectStatusChan, CloseVfwSubChan)
 					//阻塞等待返回连接结果
-					status := <-ConnectStatusChan
-					switch status {
-					case 0:
-						Doresponse(s, "connecting vfw error")
-					case 1:
-						connectedvfw = true
-						glog.Infof("connected vfw %s", vfwname)
+					select {
+					case status := <-ConnectStatusChan:
+						switch status {
+						case 0:
+							Doresponse(s, "connecting vfw error")
+						case 1:
+							connectedvfw = true
+							glog.Infof("connected vfw %s", vfwname)
+						}
+					case <-time.After(30 * time.Second):
+						Doresponse(s, "connecting vfw time out")
 					}
 				}
 				//TODO:GNS模拟器中vfw删除流程思考
 			} else if strings.Contains(requestStr, "undo context") {
 				vfwname := strings.Split(requestStr, " ")[2]
-				FindUnsetVrfInfo(vfwname)
-				Doresponse(s, SystemView)
+				info, err := FindSetVfwInfo(vfwname)
+				if err != nil {
+					Doresponse(s, "export vfw not found")
+				} else {
+					go ConnectVfw(info, s, ClientRequestChan, ConnectStatusChan, CloseVfwSubChan)
+					//阻塞等待返回连接结果
+					select {
+					case status := <-ConnectStatusChan:
+						switch status {
+						case 0:
+							Doresponse(s, "connecting vfw error")
+						case 1:
+							connectedvfw = true
+							glog.Infof("connected vfw %s", vfwname)
+						}
+					case <-time.After(30 * time.Second):
+						Doresponse(s, "connecting vfw time out")
+					}
+				}
+				if connectedvfw {
+					FindUnsetVfwInfo(vfwname)
+					ResetVfwConfigAndReboot(ClientRequestChan)
+					Doresponse(s, SystemView)
+				}
 			} else if requestStr == "Y" {
 				Doresponse(s, SystemView)
 			}
@@ -103,6 +129,18 @@ func SessionHandler(s sshsrv.Session) {
 	close(CloseVfwSubChan)
 
 	glog.Infof("client ssh session close %s", s.RemoteAddr().String())
+}
+
+// 后续考虑更优实现
+func ResetVfwConfigAndReboot(rc chan []byte) {
+	rc <- []byte("startup saved-configuration init.cfg" + "\n")
+	time.Sleep(3 * time.Second)
+	rc <- []byte("reboot" + "\n")
+	time.Sleep(3 * time.Second)
+	rc <- []byte("N" + "\n")
+	time.Sleep(1 * time.Second)
+	rc <- []byte("Y" + "\n")
+	time.Sleep(1 * time.Second)
 }
 
 func ConnectVfw(info configuration.Vfwinfo, cs sshsrv.Session, rc chan []byte, csc chan int, clc chan struct{}) {
@@ -268,20 +306,21 @@ func FindSetVfwInfo(name string) (configuration.Vfwinfo, error) {
 
 // 清理资源
 // 将vfwinfo与export信息解绑
-func FindUnsetVrfInfo(name string) {
+func FindUnsetVfwInfo(name string) {
 	var Writeconfig bool
 	configuration.ServiceConfiguration.Configmux.RLock()
 	defer configuration.ServiceConfiguration.Configmux.RUnlock()
-	for _, v := range configuration.ServiceConfiguration.Vfws {
+	for k, v := range configuration.ServiceConfiguration.Vfws {
 		//Find a vfw of the corresponding exit or unused vfirewall info
 		if v.Name == name {
 			Writeconfig = true
-			v.Name = ""
+			configuration.ServiceConfiguration.Vfws[k].Name = ""
 			break
 		}
 	}
 	if Writeconfig {
-		viper.Set("vfws", configuration.ServiceConfiguration.Vfws)
+		viper.Set("Vfws", configuration.ServiceConfiguration.Vfws)
+		viper.WriteConfig()
 		glog.Info("config vfws info changed")
 	}
 }

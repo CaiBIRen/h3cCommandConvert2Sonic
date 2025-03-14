@@ -4,9 +4,9 @@ import "encoding/xml"
 
 type L3vpn struct {
 	XMLName  xml.Name `xml:"L3vpn"`
-	L3vpnVRF L3vpnVRF `xml:"L3vpnVRF,omitempty"`
-	L3vpnIf  L3vpnIf  `xml:"L3vpnIf,omitempty"`
-	L3vpnRT  L3vpnRT  `xml:"L3vpnRT,omitempty"`
+	L3vpnVRF *L3vpnVRF `xml:"L3vpnVRF,omitempty"`
+	L3vpnIf  *L3vpnIf  `xml:"L3vpnIf,omitempty"`
+	L3vpnRT  *L3vpnRT  `xml:"L3vpnRT,omitempty"`
 }
 
 type L3vpnVRF struct {

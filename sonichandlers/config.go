@@ -63,11 +63,11 @@ var REMOVE_FEATURE_ORDER_LIST = []string{
 	basic.SONICROUTEMAPKEY,
 	basic.SONICROUTEMAPSETKEY,
 	basic.SONICSTATICROUTEKEY,
+	basic.SONICOSPFKEY,
 	basic.SONICVLANINTERFACEIPADDRKEY,
 	basic.SONICVLANINTERFACEKEY,
 	basic.SONICLOOPBACKINTERFACEIPADDRKEY,
 	basic.SONICLOOPBACKKEY,
-	basic.SONICOSPFKEY,
 	basic.SONICBGPKEY,
 	basic.SONICVXLANKEY,
 	basic.SONICVLANKEY,
@@ -115,7 +115,6 @@ func init() {
 	Config_chain.SONICChainRegister(basic.OPERMERGE, basic.SONICINTERFACEMAC, ConfigSONICInterfaceMacInKernel)
 	//sonic_config_chain.SONICChainRegister(basic.OPERMERGE, basic.SONICINDEX, SetIndexOfResouce)
 
-	//删除IP部分待实现
 	Config_chain.SONICChainRegister(basic.OPERREMOVE, basic.SONICVLANKEY, RemoveSONICVlan)
 	Config_chain.SONICChainRegister(basic.OPERREMOVE, basic.SONICVXLANKEY, RemoveSONICVxlan)
 	Config_chain.SONICChainRegister(basic.OPERREMOVE, basic.SONICVRFKEY, RemoveSONICVrf)
@@ -207,7 +206,7 @@ func ConfigSONICVxlan(t *tcontext.Tcontext) error {
 func RemoveSONICVxlan(t *tcontext.Tcontext) error {
 	vxlandata := t.SonicConfig[basic.SONICVXLANKEY].(sonicmodel.Vxlanroot)
 	for _, v := range vxlandata.SonicVxlan.VXLAN_TUNNEL_MAP_LIST {
-		urlsuffix := fmt.Sprintf("/restconf/data/sonic-vxlan:sonic-vxlan/VXLAN_TUNNEL/VXLAN_TUNNEL_LIST=%s", v.Mapname)
+		urlsuffix := fmt.Sprintf("/restconf/data/sonic-vxlan:sonic-vxlan/VXLAN_TUNNEL_MAP/VXLAN_TUNNEL_MAP_LIST=%s,%s", basic.TUNNELNAME, v.Mapname)
 		glog.Infof("vxlan mapping {%s} is deleting", v.Mapname)
 		rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, nil)
 		err := DeleteHandlerResolve(rsp)
@@ -311,10 +310,29 @@ func RemoveSONICLoopbackInterface(t *tcontext.Tcontext) error {
 func RemoveSONICVlanInterface(t *tcontext.Tcontext) error {
 	vlaninterfacedata := t.SonicConfig[basic.SONICVLANINTERFACEKEY].(sonicmodel.VlanInterfaceroot)
 	for _, v := range vlaninterfacedata.SonicVLANInterface.VLAN_INTERFACE.VLAN_INTERFACE_LIST {
-		urlsuffix := fmt.Sprintf("/restconf/data/openconfig-interfaces:interfaces/interface=%s", v.VlanName)
-		glog.Infof("vlan interface %s is deleting", v.VlanName)
-		rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, nil)
+		//先删除所有IP地址,然后再删除vlan接口
+		urlsuffix1 := fmt.Sprintf("/restconf/data/openconfig-interfaces:interfaces/interface=%s/openconfig-vlan:routed-vlan/openconfig-if-ip:ipv4/addresses", v.VlanName)
+		glog.Infof("vlan interface ipv4 addrs {%s} is deleting", v.VlanName)
+		rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix1, nil)
 		err := DeleteHandlerResolve(rsp)
+		if err != nil {
+			return err
+		}
+		glog.Infof("vlan interface ipv4 addrs {%s} has deleted", v.VlanName)
+
+		urlsuffix2 := fmt.Sprintf("/restconf/data/openconfig-interfaces:interfaces/interface=%s/openconfig-vlan:routed-vlan/openconfig-if-ip:ipv6/addresses", v.VlanName)
+		glog.Infof("vlan interface ipv6 addrs {%s} is deleting", v.VlanName)
+		rsp = httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix2, nil)
+		err = DeleteHandlerResolve(rsp)
+		if err != nil {
+			return err
+		}
+		glog.Infof("vlan interface ipv6 addrs {%s} has deleted", v.VlanName)
+
+		urlsuffix3 := fmt.Sprintf("/restconf/data/sonic-vlan-interface:sonic-vlan-interface/VLAN_INTERFACE/VLAN_INTERFACE_LIST=%s", v.VlanName)
+		glog.Infof("vlan interface %s is deleting", v.VlanName)
+		rsp = httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix3, nil)
+		err = DeleteHandlerResolve(rsp)
 		if err != nil {
 			return err
 		}
@@ -343,10 +361,10 @@ func ConfigSONICVlanInterfaceIPAddr(t *tcontext.Tcontext) error {
 }
 
 func RemoveSONICVlanInterfaceIPAddr(t *tcontext.Tcontext) error {
-	urlsuffix := "/restconf/data/sonic-vlan-interface:sonic-vlan-interface/VLAN_INTERFACE/VLAN_INTERFACE_IPADDR_LIST"
+
 	vlaninterfaceipdata := t.SonicConfig[basic.SONICVLANINTERFACEIPADDRKEY].(sonicmodel.VlanInterfaceroot)
 	for _, v := range vlaninterfaceipdata.SonicVLANInterface.VLAN_INTERFACE.VLAN_INTERFACE_LIST {
-		urlsuffix = fmt.Sprintf("/restconf/data/openconfig-interfaces:interfaces/interface=%s/openconfig-vlan:routed-vlan/openconfig-if-ip:ipv4/addresses", v.VlanName)
+		urlsuffix := fmt.Sprintf("/restconf/data/openconfig-interfaces:interfaces/interface=%s/openconfig-vlan:routed-vlan/openconfig-if-ip:ipv4/addresses", v.VlanName)
 		glog.Infof("vlan interface addr {%s} is deleting", v.VlanName)
 		rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, nil)
 		err := DeleteHandlerResolve(rsp)
@@ -455,6 +473,7 @@ func RemoveSONICBGP(t *tcontext.Tcontext) error {
 		rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, nil)
 		err := DeleteHandlerResolve(rsp)
 		if err != nil {
+			fmt.Println("aaaaaaa")
 			return err
 		}
 	}
@@ -633,10 +652,6 @@ func ConfigSONICRoutemap(t *tcontext.Tcontext) error {
 }
 
 func RemoveSONICRoutemap(t *tcontext.Tcontext) error {
-	var AllDelete bool
-	existmap1 := make(map[string]bool)
-	existmap2 := make(map[string]bool)
-
 	routemapdata := t.SonicConfig[basic.SONICROUTEMAPKEY].(sonicmodel.SonicRoutemaproot)
 	for _, v := range routemapdata.SonicRouteMap.RouteMap.RouteMapList {
 		urlsuffix := fmt.Sprintf("/restconf/data/sonic-route-map:sonic-route-map/ROUTE_MAP/ROUTE_MAP_LIST=%s,%d", v.RouteMapName, v.StmtName)
@@ -646,60 +661,63 @@ func RemoveSONICRoutemap(t *tcontext.Tcontext) error {
 		if err != nil {
 			return err
 		}
-		existmap1[v.RouteMapName] = true
 		glog.Infof("route map {%s} {%d} has deleted", v.RouteMapName, v.StmtName)
 	}
 
-	//如果routemapset下面没有子元素 则可以删除route-policy-Set
-	var Routemaplist sonicmodel.SonicRoutingPolicySetList
-	urlsuffix := "/restconf/data/sonic-route-map:sonic-route-map/ROUTE_MAP_LIST"
-	rsp := httpclient.SONICCLENT.SendSonicRequest("get", urlsuffix, nil)
-	err := GetHandlerResolve(rsp)
-	if err != nil {
-		glog.Errorf("get route map list to cachedata error:%s", err)
-		return err
-	}
-	if rsp.Responese != nil {
-		err := mapstructure.Decode(rsp.Responese, &Routemaplist)
-		if err != nil {
-			return err
-		}
-	} else {
-		//all existmap1 need to  delete
-		// return nil
-		AllDelete = true
-	}
+	//TODO:routemapset 会残留
+	// var AllDelete bool
+	// existmap1 := make(map[string]bool)
+	// existmap2 := make(map[string]bool)
+	// //如果routemapset下面没有子元素 则可以删除route-policy-Set
+	// var Routemaplist sonicmodel.SonicRoutingPolicySetList
+	// urlsuffix := "/restconf/data/sonic-route-map:sonic-route-map/ROUTE_MAP/ROUTE_MAP_LIST"
+	// rsp := httpclient.SONICCLENT.SendSonicRequest("get", urlsuffix, nil)
+	// err := GetHandlerResolve(rsp)
+	// if err != nil {
+	// 	glog.Errorf("get route map list to cachedata error:%s", err)
+	// 	return err
+	// }
+	// if rsp.Responese != nil {
+	// 	err := mapstructure.Decode(rsp.Responese, &Routemaplist)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// } else {
+	// 	//all existmap1 need to  delete
+	// 	// return nil
+	// 	AllDelete = true
+	// }
 
-	if AllDelete {
-		for k, _ := range existmap1 {
-			urlsuffix := fmt.Sprintf("/restconf/data/sonic-route-map:sonic-route-map/ROUTE_MAP_SET/ROUTE_MAP_SET_LIST=%s", k)
-			glog.Infof("route policy set {%s} is deleting", k)
-			rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, nil)
-			err := DeleteHandlerResolve(rsp)
-			if err != nil {
-				return err
-			}
-			glog.Infof("route policy set {%s} ahs deleted", k)
-		}
-		return nil
-	}
+	// if AllDelete {
+	// 	for k, _ := range existmap1 {
+	// 		urlsuffix := fmt.Sprintf("/restconf/data/sonic-route-map:sonic-route-map/ROUTE_MAP_SET/ROUTE_MAP_SET_LIST=%s", k)
+	// 		glog.Infof("route policy set {%s} is deleting", k)
+	// 		rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, nil)
+	// 		err := DeleteHandlerResolve(rsp)
+	// 		if err != nil {
+	// 			return err
+	// 		}
+	// 		glog.Infof("route policy set {%s} has deleted", k)
+	// 	}
+	// 	return nil
+	// }
 
-	for _, v := range Routemaplist.Get_RoutePolicyMaps {
-		existmap2[v.RouteMapName] = true
-	}
+	// for _, v := range Routemaplist.Get_RoutePolicyMaps {
+	// 	existmap2[v.RouteMapName] = true
+	// }
 
-	for k, _ := range existmap1 {
-		if _, ok := existmap2[k]; !ok {
-			urlsuffix := fmt.Sprintf("/restconf/data/sonic-route-map:sonic-route-map/ROUTE_MAP_SET/ROUTE_MAP_SET_LIST=%s", k)
-			glog.Infof("route policy set {%s} is deleting", k)
-			rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, nil)
-			err := DeleteHandlerResolve(rsp)
-			if err != nil {
-				return err
-			}
-			glog.Infof("route policy set {%s} has deleted", k)
-		}
-	}
+	// for k, _ := range existmap1 {
+	// 	if _, ok := existmap2[k]; !ok {
+	// 		urlsuffix := fmt.Sprintf("/restconf/data/sonic-route-map:sonic-route-map/ROUTE_MAP_SET/ROUTE_MAP_SET_LIST=%s", k)
+	// 		glog.Infof("route policy set {%s} is deleting", k)
+	// 		rsp := httpclient.SONICCLENT.SendSonicRequest(t.Operation, urlsuffix, nil)
+	// 		err := DeleteHandlerResolve(rsp)
+	// 		if err != nil {
+	// 			return err
+	// 		}
+	// 		glog.Infof("route policy set {%s} has deleted", k)
+	// 	}
+	// }
 	return nil
 }
 
@@ -784,6 +802,51 @@ func CommonRemoveRouteRedistribute(vrfname string, src_protocol []string, dst_pr
 			}
 		}
 	}
+	return nil
+}
+
+func RemoveSONICL3vniByVrf(vrfname string) error {
+	urlsuffix := fmt.Sprintf("/restconf/data/sonic-vrf:sonic-vrf/VRF/VRF_LIST=%s/vni", vrfname)
+	rsp := httpclient.SONICCLENT.SendSonicRequest(basic.OPERREMOVE, urlsuffix, nil)
+	err := DeleteHandlerResolve(rsp)
+	if err != nil {
+		return err
+	}
+	glog.Infof("vrf {%s} l3vni has deleted", vrfname)
+	return nil
+}
+
+func RemoveSONICVlaninterfaceVrf(vrfname string) error {
+	vlaninterfaces, err := GetSONICVlanInterfacesByVrf(vrfname)
+	if err != nil {
+		if err.Error() == basic.RESOURCENOTFOUND {
+			return nil
+		} else {
+			return err
+		}
+	}
+	for _, v := range vlaninterfaces.VLAN_INTERFACE_LIST {
+		urlsuffix := fmt.Sprintf("/restconf/data/sonic-vlan-interface:sonic-vlan-interface/VLAN_INTERFACE/VLAN_INTERFACE_LIST=%s/vrf_name", v.VlanName)
+		rsp := httpclient.SONICCLENT.SendSonicRequest(basic.OPERREMOVE, urlsuffix, nil)
+		glog.Infof("vlan interface {%s} vrf instance is deleting", v.VlanName)
+		err := DeleteHandlerResolve(rsp)
+		if err != nil {
+			return err
+		}
+		glog.Infof("vlan interface {%s} vrf instance has deleted", v.VlanName)
+
+	}
+	return nil
+}
+
+func RemoveSONICLoopbackinterfaceVrf(loopbackid string) error {
+	urlsuffix := fmt.Sprintf("/restconf/data/sonic-loopback-interface:sonic-loopback-interface/LOOPBACK_INTERFACE/LOOPBACK_INTERFACE_LIST=Loopback%s/vrf_name", loopbackid)
+	rsp := httpclient.SONICCLENT.SendSonicRequest(basic.OPERREMOVE, urlsuffix, nil)
+	err := DeleteHandlerResolve(rsp)
+	if err != nil {
+		return err
+	}
+	glog.Infof("loopback interface {%s} vrf instance has deleted", loopbackid)
 	return nil
 }
 

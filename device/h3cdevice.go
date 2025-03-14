@@ -44,7 +44,6 @@ func (h3c H3cdevice) Decode(featuremap map[string]*xmlquery.Node, c *tcontext.Tc
 				glog.Errorf("L3vpn xml illegal %v", err)
 				return err
 			}
-
 			c.Features[k] = l3vpn
 		case "L2VPN":
 			var l2vpn h3cmodel.L2vpn
@@ -193,6 +192,13 @@ func (h3c H3cdevice) IntegrationReply(c *tcontext.Tcontext) (string, error) {
 				return "", err
 			}
 			dataxml += OutputLineBreak(output)
+		case "L3vpn":
+			l3vpndata := v.(h3cmodel.L3vpn)
+			output, err := xml.MarshalIndent(l3vpndata, "", "  ")
+			if err != nil {
+				return "", err
+			}
+			dataxml += OutputLineBreak(output)
 		}
 	}
 	return replyprefix + dataxml + replysuffix, nil
@@ -280,12 +286,11 @@ func (h3c H3cdevice) EncodeRemove(c *tcontext.Tcontext) error {
 			if err != nil {
 				return err
 			}
-		case "L2vpn":
+		case "L2VPN":
 			err := L2vpnEncodeRemove(c)
 			if err != nil {
 				return err
 			}
-
 		case "BGP":
 			err := BGPEncodeRemove(c)
 			if err != nil {
@@ -346,6 +351,11 @@ func (h3c H3cdevice) EncodeGet(featuremap map[string]*xmlquery.Node, c *tcontext
 		//
 		case "BGP":
 			err := BGPEncodeGET(v, c)
+			if err != nil {
+				return err
+			}
+		case "L3vpn":
+			err := L3vpnEncodeGET(v, c)
 			if err != nil {
 				return err
 			}
@@ -541,9 +551,9 @@ func IfmgrEncodeGET(node *xmlquery.Node, c *tcontext.Tcontext) error {
 	ifname := xmlquery.FindOne(node, "//Name")
 	if ifname != nil && ifname.InnerText() != "" {
 		Intname := ifname.InnerText()
+		var ifmgrnode h3cmodel.Ifmgr
+		var ifmgrinterfaces h3cmodel.Interfaces
 		if strings.HasPrefix(Intname, "vlan") || strings.HasPrefix(Intname, "Vlan") {
-			var ifmgrnode h3cmodel.Ifmgr
-			var ifmgrinterfaces h3cmodel.Interfaces
 			vlanid, _ := GetInterfaceString(Intname)
 			err := sonichandlers.GetSONICVlanInterfaceByName("Vlan" + vlanid)
 			//返回err代表查找不到
@@ -556,9 +566,21 @@ func IfmgrEncodeGET(node *xmlquery.Node, c *tcontext.Tcontext) error {
 			c.Features["Ifmgr"] = ifmgrnode
 			return nil
 		} else if strings.HasPrefix(Intname, "Loop") || strings.HasPrefix(Intname, "loop") {
-			var ifmgrnode h3cmodel.Ifmgr
-			var ifmgrinterfaces h3cmodel.Interfaces
 			err := sonichandlers.GetSONICLoopbackInterfaceByName(Intname)
+			if err != nil {
+				return nil
+			}
+			ifinterface := h3cmodel.Interface{IfIndex: Intname, Name: Intname}
+			ifmgrinterfaces.Interface = append(ifmgrinterfaces.Interface, ifinterface)
+			ifmgrnode.Interfaces = &ifmgrinterfaces
+			c.Features["Ifmgr"] = ifmgrnode
+			return nil
+		} else if strings.HasPrefix(Intname, "Vsi") || strings.HasPrefix(Intname, "vsi") {
+			vsiid, _ := GetInterfaceString(Intname)
+			vsiid_int, _ := strconv.Atoi(vsiid)
+			vlanid := L3vni2Vlan(vsiid_int)
+			err := sonichandlers.GetSONICVlanInterfaceByName("Vlan" + strconv.Itoa(vlanid))
+			//返回err代表查找不到
 			if err != nil {
 				return nil
 			}
@@ -595,6 +617,35 @@ func IfmgrEncodeGET(node *xmlquery.Node, c *tcontext.Tcontext) error {
 			}
 		}
 	}
+	return nil
+}
+
+func L3vpnEncodeGET(node *xmlquery.Node, c *tcontext.Tcontext) error {
+	l3vrfnode := xmlquery.FindOne(node, "//L3vpnVRF")
+	if l3vrfnode == nil {
+		return nil
+	}
+	vrfxml := xmlquery.FindOne(node, "//VRF/VRF")
+	vrfname := vrfxml.InnerText()
+	if vrfname == "" {
+		return errors.New("l3vpn l3vpnvrf vrf elem can not be nil")
+	}
+	vrfnamenew := VrfNameFormat(vrfname)
+	err := sonichandlers.GetSONICVRFByName(vrfnamenew)
+	if err != nil {
+		if err.Error() == basic.RESOURCENOTFOUND {
+			return nil
+		} else {
+			return err
+		}
+	}
+
+	var l3vpn h3cmodel.L3vpn
+	var l3vpnvrf h3cmodel.L3vpnVRF
+	vrfnode := h3cmodel.VRF{VRF: vrfname}
+	l3vpnvrf.VRFs = append(l3vpnvrf.VRFs, vrfnode)
+	l3vpn.L3vpnVRF = &l3vpnvrf
+	c.Features["L3vpn"] = l3vpn
 	return nil
 }
 
@@ -966,21 +1017,21 @@ func L2vpnEncodeRemove(c *tcontext.Tcontext) error {
 			if err != nil {
 				return err
 			}
-			vlanid := L3vni2Vlan(v.L3VNI)
+			vlanid := L3vni2Vlan(v.ID)
 			//vlan
 			vlanName := "Vlan" + strconv.Itoa(vlanid)
 			vlanindex := Parameters2Index(vlanName) + basic.SONICVLANELEMENT
 			c.DiscreteConfiguration[basic.SONICVLANKEY][vlanindex] = sonicmodel.VLANNode{Name: vlanName}
 			//vxlan
-			vxlanName := "map_" + strconv.Itoa(v.L3VNI) + "_Vlan"
+			vxlanName := "map_" + strconv.Itoa(v.ID) + "_Vlan" + strconv.Itoa(vlanid)
 			vxlanindex := Parameters2Index(basic.TUNNELNAME, vxlanName) + basic.SONICVXLANTUNNELMAPELEMENT
 			c.DiscreteConfiguration[basic.SONICVXLANKEY][vxlanindex] = sonicmodel.VxlanTunnelMap{Name: basic.TUNNELNAME, Mapname: vxlanName}
 			//vlan-interface
-			vlaninterfacenode := sonicmodel.VlanInterface{
-				VlanName: vlanName,
-			}
-			vlaninterfaceindex := Parameters2Index(vlaninterfacenode.VlanName) + basic.SONICVLANINTERFACEELEMENT
-			c.DiscreteConfiguration[basic.SONICVLANINTERFACEKEY][vlaninterfaceindex] = vlaninterfacenode
+			// vlaninterfacenode := sonicmodel.VlanInterface{
+			// 	VlanName: vlanName,
+			// }
+			// vlaninterfaceindex := Parameters2Index(vlaninterfacenode.VlanName) + basic.SONICVLANINTERFACEELEMENT
+			// c.DiscreteConfiguration[basic.SONICVLANINTERFACEKEY][vlaninterfaceindex] = vlaninterfacenode
 		}
 	}
 	return nil
@@ -993,156 +1044,160 @@ func L3vpnEncodeMerge(c *tcontext.Tcontext) error {
 		return errors.New("L3vpn data assert failed")
 	}
 	CreateFeaturemap(c.DiscreteConfiguration, basic.SONICVRFKEY, basic.SONICVLANINTERFACEKEY, basic.SONICBGPKEY, basic.SONICLOOPBACKKEY)
-	if len(data.L3vpnVRF.VRFs) > 0 {
-		for _, v := range data.L3vpnVRF.VRFs {
-			v.VRF = VrfNameFormat(v.VRF)
-			err := VRFCheck(&v)
-			if err != nil {
-				return err
-			}
-			vrfnode := sonicmodel.Vrf{VrfName: v.VRF}
-			vrfindex := Parameters2Index(vrfnode.VrfName) + basic.SONICVRFELEMENT
-			c.DiscreteConfiguration[basic.SONICVRFKEY][vrfindex] = vrfnode
-
-			var bgpafnode sonicmodel.BgpGlobalsAFList
-			var bgpglobalnode sonicmodel.BgpGlobalsList
-
-			if v.RD != "" {
-				bgpglobalindex := Parameters2Index(v.VRF) + basic.SONICBGPGLOBALELEMENT
-				bgpglobalnode.VrfName = v.VRF
-				bgpglobalnode.LocalASN = basic.DefaultBGPLocalasn
-				c.DiscreteConfiguration[basic.SONICBGPKEY][bgpglobalindex] = bgpglobalnode
-
-				bgpafindex := Parameters2Index(v.VRF, "l2vpn_evpn") + basic.SONICBGPGLOBALAFELEMENT
-				if IndexQueryContext(c.DiscreteConfiguration, basic.SONICBGPKEY, bgpafindex) {
-					bgpafnode = c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex].(sonicmodel.BgpGlobalsAFList)
-				} else {
-					bgpafnode = BgpGlobalsAfOrganize(v.VRF, 4, "L3vpn")
+	if data.L3vpnVRF != nil {
+		if len(data.L3vpnVRF.VRFs) > 0 {
+			for _, v := range data.L3vpnVRF.VRFs {
+				v.VRF = VrfNameFormat(v.VRF)
+				if v.VRF == "" {
+					return errors.New("vrf can not be nil")
 				}
-				bgpafnode.RouteDistinguisher = v.RD
-				c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex] = bgpafnode
-			}
-			if v.Ipv4ImportRoutePolicy != "" {
-				bgpafindex := Parameters2Index(v.VRF, "ipv4_unicast") + basic.SONICBGPGLOBALAFELEMENT
-				if IndexQueryContext(c.DiscreteConfiguration, basic.SONICBGPKEY, bgpafindex) {
-					bgpafnode = c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex].(sonicmodel.BgpGlobalsAFList)
-				} else {
-					bgpafnode = BgpGlobalsAfOrganize(v.VRF, 4, "L3vpn")
-				}
-				bgpafnode.ImportVRFRouteMap = v.Ipv4ImportRoutePolicy
-				c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex] = bgpafnode
-			}
-			if v.Ipv6ImportRoutePolicy != "" {
-				bgpafindex := Parameters2Index(v.VRF, "ipv6_unicast") + basic.SONICBGPGLOBALAFELEMENT
-				if IndexQueryContext(c.DiscreteConfiguration, basic.SONICBGPKEY, bgpafindex) {
-					bgpafnode = c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex].(sonicmodel.BgpGlobalsAFList)
-				} else {
-					bgpafnode = BgpGlobalsAfOrganize(v.VRF, 4, "L3vpn")
-				}
-				bgpafnode.ImportVRFRouteMap = v.Ipv6ImportRoutePolicy
-				c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex] = bgpafnode
-			}
-			if v.EVPNImportRoutePolicy != "" {
-				bgpafindex := Parameters2Index(v.VRF, "l2vpn_evpn") + basic.SONICBGPGLOBALAFELEMENT
-				if IndexQueryContext(c.DiscreteConfiguration, basic.SONICBGPKEY, bgpafindex) {
-					bgpafnode = c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex].(sonicmodel.BgpGlobalsAFList)
-				} else {
-					bgpafnode = BgpGlobalsAfOrganize(v.VRF, 4, "L3vpn")
-				}
-				bgpafnode.ImportVRFRouteMap = v.EVPNImportRoutePolicy
-				c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex] = bgpafnode
-			}
-		}
-	}
-
-	if len(data.L3vpnIf.Binds) > 0 {
-		//分两种情况1、l3vsi接口 找vlaninterface bind 2、实际interface bind
-		for _, v := range data.L3vpnIf.Binds {
-			v.VRF = VrfNameFormat(v.VRF)
-			err := BindCheck(&v)
-			if err != nil {
-				return err
-			}
-
-			if strings.HasPrefix(v.IfIndex, "Vsi") || strings.HasPrefix(v.IfIndex, "vsi") {
-				ifidx, err := GetInterfaceString(v.IfIndex)
-				if err != nil {
-					return err
-				}
-				l3vni, err := strconv.Atoi(ifidx)
-				if err != nil {
-					return err
-				}
-				var vrfnode sonicmodel.Vrf
-				vrfindex := Parameters2Index(v.VRF) + basic.SONICVRFELEMENT
-				vrfnode.VrfName = v.VRF
-				vrfnode.Vni = l3vni
+				vrfnode := sonicmodel.Vrf{VrfName: v.VRF}
+				vrfindex := Parameters2Index(vrfnode.VrfName) + basic.SONICVRFELEMENT
 				c.DiscreteConfiguration[basic.SONICVRFKEY][vrfindex] = vrfnode
 
-				vlan := L3vni2Vlan(l3vni)
-				vlan_interface_node := sonicmodel.VlanInterface{VlanName: "Vlan" + strconv.Itoa(vlan), VrfName: v.VRF}
-				vlaninterfaceindex := Parameters2Index(vlan_interface_node.VlanName) + basic.SONICVLANINTERFACEELEMENT
-				c.DiscreteConfiguration[basic.SONICVLANINTERFACEKEY][vlaninterfaceindex] = vlan_interface_node
-			} else if strings.Contains(v.IfIndex, "Vlan") || strings.Contains(v.IfIndex, "vlan") {
-				ifidx, err := GetInterfaceString(v.IfIndex)
-				if err != nil {
-					return err
+				var bgpafnode sonicmodel.BgpGlobalsAFList
+				var bgpglobalnode sonicmodel.BgpGlobalsList
+
+				if v.RD != "" {
+					bgpglobalindex := Parameters2Index(v.VRF) + basic.SONICBGPGLOBALELEMENT
+					bgpglobalnode.VrfName = v.VRF
+					bgpglobalnode.LocalASN = basic.DefaultBGPLocalasn
+					c.DiscreteConfiguration[basic.SONICBGPKEY][bgpglobalindex] = bgpglobalnode
+
+					bgpafindex := Parameters2Index(v.VRF, "l2vpn_evpn") + basic.SONICBGPGLOBALAFELEMENT
+					if IndexQueryContext(c.DiscreteConfiguration, basic.SONICBGPKEY, bgpafindex) {
+						bgpafnode = c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex].(sonicmodel.BgpGlobalsAFList)
+					} else {
+						bgpafnode = BgpGlobalsAfOrganize(v.VRF, 4, "L3vpn")
+					}
+					bgpafnode.RouteDistinguisher = v.RD
+					c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex] = bgpafnode
 				}
-				vlan_interface_node := sonicmodel.VlanInterface{VlanName: "Vlan" + ifidx, VrfName: v.VRF}
-				vlaninterfaceindex := Parameters2Index(vlan_interface_node.VlanName) + basic.SONICVLANINTERFACEELEMENT
-				c.DiscreteConfiguration[basic.SONICVLANINTERFACEKEY][vlaninterfaceindex] = vlan_interface_node
-			} else if strings.Contains(v.IfIndex, "Loop") || strings.Contains(v.IfIndex, "loop") {
-				ifidx, err := GetInterfaceString(v.IfIndex)
-				if err != nil {
-					return err
+				if v.Ipv4ImportRoutePolicy != "" {
+					bgpafindex := Parameters2Index(v.VRF, "ipv4_unicast") + basic.SONICBGPGLOBALAFELEMENT
+					if IndexQueryContext(c.DiscreteConfiguration, basic.SONICBGPKEY, bgpafindex) {
+						bgpafnode = c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex].(sonicmodel.BgpGlobalsAFList)
+					} else {
+						bgpafnode = BgpGlobalsAfOrganize(v.VRF, 4, "L3vpn")
+					}
+					bgpafnode.ImportVRFRouteMap = v.Ipv4ImportRoutePolicy
+					c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex] = bgpafnode
 				}
-				loopback_interface_node := sonicmodel.LoopbackInterface{LoIfName: "Loopback" + ifidx, VrfName: &v.VRF}
-				loopbackinterfaceindex := Parameters2Index(loopback_interface_node.LoIfName) + basic.SONICLOOPBACKINTERFACEELEMENT
-				c.DiscreteConfiguration[basic.SONICLOOPBACKKEY][loopbackinterfaceindex] = loopback_interface_node
+				if v.Ipv6ImportRoutePolicy != "" {
+					bgpafindex := Parameters2Index(v.VRF, "ipv6_unicast") + basic.SONICBGPGLOBALAFELEMENT
+					if IndexQueryContext(c.DiscreteConfiguration, basic.SONICBGPKEY, bgpafindex) {
+						bgpafnode = c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex].(sonicmodel.BgpGlobalsAFList)
+					} else {
+						bgpafnode = BgpGlobalsAfOrganize(v.VRF, 4, "L3vpn")
+					}
+					bgpafnode.ImportVRFRouteMap = v.Ipv6ImportRoutePolicy
+					c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex] = bgpafnode
+				}
+				if v.EVPNImportRoutePolicy != "" {
+					bgpafindex := Parameters2Index(v.VRF, "l2vpn_evpn") + basic.SONICBGPGLOBALAFELEMENT
+					if IndexQueryContext(c.DiscreteConfiguration, basic.SONICBGPKEY, bgpafindex) {
+						bgpafnode = c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex].(sonicmodel.BgpGlobalsAFList)
+					} else {
+						bgpafnode = BgpGlobalsAfOrganize(v.VRF, 4, "L3vpn")
+					}
+					bgpafnode.ImportVRFRouteMap = v.EVPNImportRoutePolicy
+					c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex] = bgpafnode
+				}
 			}
 		}
 	}
+	if data.L3vpnIf != nil {
+		if len(data.L3vpnIf.Binds) > 0 {
+			//分两种情况1、l3vsi接口 找vlaninterface bind 2、实际interface bind
+			for _, v := range data.L3vpnIf.Binds {
+				err := BindCheck(&v)
+				if err != nil {
+					return err
+				}
 
-	if len(data.L3vpnRT.RTs) > 0 {
-		for _, v := range data.L3vpnRT.RTs {
-			v.VRF = VrfNameFormat(v.VRF)
-			err := L3vpnRTCheck(&v)
-			if err != nil {
-				return err
-			}
-			var bgpafnode sonicmodel.BgpGlobalsAFList
-			bgpafnode.VrfName = v.VRF
-			addressfamily := Familytrans(v.AddressFamily, "L3vpn")
-			if addressfamily == "" {
-				return errors.New("L3vpnRT addressfamily value err")
-			}
-			// //RT not config in this afs,all in evpn
-			// if addressfamily == "ipv4_unicast" || addressfamily == "ipv6_unicast" {
-			// 	bgpafindex := Parameters2Index(v.VRF, addressfamily) + basic.SONICBGPGLOBALAFELEMENT
-			// 	bgpafnode.AFISAFI = addressfamily
-			// 	c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex] = bgpafnode
-			// 	continue
-			// }
+				v.VRF = VrfNameFormat(v.VRF)
 
-			//evpn config rt
-			bgpafindex := Parameters2Index(v.VRF, addressfamily) + basic.SONICBGPGLOBALAFELEMENT
-			if !IndexQueryContext(c.DiscreteConfiguration, basic.SONICBGPKEY, bgpafindex) {
-				bgpafnode = BgpGlobalsAfOrganize(v.VRF, v.AddressFamily, "L3vpn")
-			} else {
-				bgpafnode = c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex].(sonicmodel.BgpGlobalsAFList)
+				if strings.HasPrefix(v.IfIndex, "Vsi") || strings.HasPrefix(v.IfIndex, "vsi") {
+					ifidx, err := GetInterfaceString(v.IfIndex)
+					if err != nil {
+						return err
+					}
+					l3vni, err := strconv.Atoi(ifidx)
+					if err != nil {
+						return err
+					}
+					var vrfnode sonicmodel.Vrf
+					vrfindex := Parameters2Index(v.VRF) + basic.SONICVRFELEMENT
+					vrfnode.VrfName = v.VRF
+					vrfnode.Vni = l3vni
+					c.DiscreteConfiguration[basic.SONICVRFKEY][vrfindex] = vrfnode
+
+					vlan := L3vni2Vlan(l3vni)
+					vlan_interface_node := sonicmodel.VlanInterface{VlanName: "Vlan" + strconv.Itoa(vlan), VrfName: v.VRF}
+					vlaninterfaceindex := Parameters2Index(vlan_interface_node.VlanName) + basic.SONICVLANINTERFACEELEMENT
+					c.DiscreteConfiguration[basic.SONICVLANINTERFACEKEY][vlaninterfaceindex] = vlan_interface_node
+				} else if strings.Contains(v.IfIndex, "Vlan") || strings.Contains(v.IfIndex, "vlan") {
+					ifidx, err := GetInterfaceString(v.IfIndex)
+					if err != nil {
+						return err
+					}
+					vlan_interface_node := sonicmodel.VlanInterface{VlanName: "Vlan" + ifidx, VrfName: v.VRF}
+					vlaninterfaceindex := Parameters2Index(vlan_interface_node.VlanName) + basic.SONICVLANINTERFACEELEMENT
+					c.DiscreteConfiguration[basic.SONICVLANINTERFACEKEY][vlaninterfaceindex] = vlan_interface_node
+				} else if strings.Contains(v.IfIndex, "Loop") || strings.Contains(v.IfIndex, "loop") {
+					ifidx, err := GetInterfaceString(v.IfIndex)
+					if err != nil {
+						return err
+					}
+					loopback_interface_node := sonicmodel.LoopbackInterface{LoIfName: "Loopback" + ifidx, VrfName: &v.VRF}
+					loopbackinterfaceindex := Parameters2Index(loopback_interface_node.LoIfName) + basic.SONICLOOPBACKINTERFACEELEMENT
+					c.DiscreteConfiguration[basic.SONICLOOPBACKKEY][loopbackinterfaceindex] = loopback_interface_node
+				}
 			}
-			//华三evpn默认导入IPV4/IPV6
-			if addressfamily == "l2vpn_evpn" {
-				bgpafnode.AdvertiseIPv4Unicast = true
-				bgpafnode.AdvertiseIPv6Unicast = true
+		}
+	}
+	if data.L3vpnRT != nil {
+		if len(data.L3vpnRT.RTs) > 0 {
+			for _, v := range data.L3vpnRT.RTs {
+				err := L3vpnRTCheck(&v)
+				if err != nil {
+					return err
+				}
+				v.VRF = VrfNameFormat(v.VRF)
+				var bgpafnode sonicmodel.BgpGlobalsAFList
+				bgpafnode.VrfName = v.VRF
+				addressfamily := Familytrans(v.AddressFamily, "L3vpn")
+				if addressfamily == "" {
+					return errors.New("L3vpnRT addressfamily value err")
+				}
+				// //RT not config in this afs,all in evpn
+				// if addressfamily == "ipv4_unicast" || addressfamily == "ipv6_unicast" {
+				// 	bgpafindex := Parameters2Index(v.VRF, addressfamily) + basic.SONICBGPGLOBALAFELEMENT
+				// 	bgpafnode.AFISAFI = addressfamily
+				// 	c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex] = bgpafnode
+				// 	continue
+				// }
+
+				//evpn config rt
+				bgpafindex := Parameters2Index(v.VRF, addressfamily) + basic.SONICBGPGLOBALAFELEMENT
+				if !IndexQueryContext(c.DiscreteConfiguration, basic.SONICBGPKEY, bgpafindex) {
+					bgpafnode = BgpGlobalsAfOrganize(v.VRF, v.AddressFamily, "L3vpn")
+				} else {
+					bgpafnode = c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex].(sonicmodel.BgpGlobalsAFList)
+				}
+				//华三evpn默认导入IPV4/IPV6
+				if addressfamily == "l2vpn_evpn" {
+					bgpafnode.AdvertiseIPv4Unicast = true
+					bgpafnode.AdvertiseIPv6Unicast = true
+				}
+				switch v.RTType {
+				case 1:
+					bgpafnode.ImportRTS = append(bgpafnode.ImportRTS, v.RTEntry)
+				case 2:
+					bgpafnode.ExportRTS = append(bgpafnode.ExportRTS, v.RTEntry)
+				}
+				c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex] = bgpafnode
 			}
-			switch v.RTType {
-			case 1:
-				bgpafnode.ImportRTS = append(bgpafnode.ImportRTS, v.RTEntry)
-			case 2:
-				bgpafnode.ExportRTS = append(bgpafnode.ExportRTS, v.RTEntry)
-			}
-			c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex] = bgpafnode
 		}
 	}
 	return nil
@@ -1154,58 +1209,90 @@ func L3vpnEncodeRemove(c *tcontext.Tcontext) error {
 	if !ok {
 		return errors.New("L3vpn data assert failed")
 	}
-	CreateFeaturemap(c.DiscreteConfiguration, basic.SONICVRFKEY, basic.SONICVLANINTERFACEKEY, basic.SONICBGPKEY)
-	if len(data.L3vpnVRF.VRFs) > 0 {
-		for _, v := range data.L3vpnVRF.VRFs {
-			v.VRF = VrfNameFormat(v.VRF)
-			err := VRFCheck(&v)
-			if err != nil {
-				return err
-			}
-			//sonic删除vrf前需要将其他引用配置清理干净
-			//1-BGP
-			bgpglobalnode := sonicmodel.BgpGlobalsList{VrfName: v.VRF}
-			bgpglobalindex := Parameters2Index(v.VRF) + basic.SONICBGPGLOBALELEMENT
-			c.DiscreteConfiguration[basic.SONICBGPKEY][bgpglobalindex] = bgpglobalnode
 
-			//删除VRF
-			vrfnode := sonicmodel.Vrf{VrfName: v.VRF}
-			vrfindex := Parameters2Index(vrfnode.VrfName) + basic.SONICVRFELEMENT
-			c.DiscreteConfiguration[basic.SONICVRFKEY][vrfindex] = vrfnode
+	CreateFeaturemap(c.DiscreteConfiguration, basic.SONICVRFKEY, basic.SONICVLANINTERFACEKEY, basic.SONICBGPKEY, basic.SONICSTATICROUTEKEY, basic.SONICROUTECOMMONKEY)
+	if data.L3vpnVRF != nil {
+		if len(data.L3vpnVRF.VRFs) > 0 {
+			for _, v := range data.L3vpnVRF.VRFs {
+				err := VRFCheck(&v)
+				if err != nil {
+					return err
+				}
+
+				v.VRF = VrfNameFormat(v.VRF)
+				//正常vpc流程
+				//1、先清除vni配置并且移除接口下面的VRF实例
+				err = sonichandlers.RemoveSONICVlaninterfaceVrf(v.VRF)
+				if err != nil {
+					return err
+				}
+				err = sonichandlers.RemoveSONICL3vniByVrf(v.VRF)
+				if err != nil {
+					return err
+				}
+
+				//2、删除vrf前需要将其他引用配置清理干净
+				//1-BGP
+				err = BGPVRFEncodeRemove(c, v.VRF)
+				if err != nil {
+					return err
+				}
+
+				//2-StaticRoute
+				vrfstaticroutes, err := sonichandlers.GetStaticRoutebyVrf(v.VRF)
+				if err != nil {
+					return err
+				}
+				for _, v := range vrfstaticroutes.StaticRouteList {
+					routeindex := Parameters2Index(v.VrfName, v.Prefix) + basic.SONICSTATICROUTEELEMENT
+					staticroutenode := sonicmodel.StaticRouteEntry{
+						VrfName: v.VrfName,
+						Prefix:  v.Prefix,
+					}
+					c.DiscreteConfiguration[basic.SONICSTATICROUTEKEY][routeindex] = staticroutenode
+				}
+				//last-删除VRF
+				vrfnode := sonicmodel.Vrf{VrfName: v.VRF}
+				vrfindex := Parameters2Index(vrfnode.VrfName) + basic.SONICVRFELEMENT
+				c.DiscreteConfiguration[basic.SONICVRFKEY][vrfindex] = vrfnode
+			}
 		}
 	}
 	//not consider interface unbind vrf
 	// if len(data.L3vpnIf.Binds) > 0 {
 
 	// }
+	if data.L3vpnRT != nil {
+		if len(data.L3vpnRT.RTs) > 0 {
+			for _, v := range data.L3vpnRT.RTs {
+				err := L3vpnRTCheck(&v)
+				if err != nil {
+					return err
+				}
 
-	if len(data.L3vpnRT.RTs) > 0 {
-		for _, v := range data.L3vpnRT.RTs {
-			v.VRF = VrfNameFormat(v.VRF)
-			err := L3vpnRTCheck(&v)
-			if err != nil {
-				return err
-			}
-			var bgpafnode sonicmodel.BgpGlobalsAFList
-			addressfamily := Familytrans(v.AddressFamily, "L3vpn")
-			if addressfamily == "l2vpn_evpn" {
-				bgpafindex := Parameters2Index(v.VRF, addressfamily) + basic.SONICBGPGLOBALAFELEMENT
-				if !IndexQueryContext(c.DiscreteConfiguration, basic.SONICBGPKEY, bgpafindex) {
-					bgpafnode = BgpGlobalsAfOrganize(v.VRF, v.AddressFamily, "L3vpn")
-				} else {
-					bgpafnode = c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex].(sonicmodel.BgpGlobalsAFList)
+				v.VRF = VrfNameFormat(v.VRF)
+				var bgpafnode sonicmodel.BgpGlobalsAFList
+				addressfamily := Familytrans(v.AddressFamily, "L3vpn")
+				if addressfamily == "l2vpn_evpn" {
+					bgpafindex := Parameters2Index(v.VRF, addressfamily) + basic.SONICBGPGLOBALAFELEMENT
+					if !IndexQueryContext(c.DiscreteConfiguration, basic.SONICBGPKEY, bgpafindex) {
+						bgpafnode = BgpGlobalsAfOrganize(v.VRF, v.AddressFamily, "L3vpn")
+					} else {
+						bgpafnode = c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex].(sonicmodel.BgpGlobalsAFList)
+					}
+					switch v.RTType {
+					case 1:
+						bgpafnode.ImportRTS = append(bgpafnode.ImportRTS, v.RTEntry)
+					case 2:
+						bgpafnode.ExportRTS = append(bgpafnode.ExportRTS, v.RTEntry)
+					}
+					//list rts to be deleted
+					c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex] = bgpafnode
 				}
-				switch v.RTType {
-				case 1:
-					bgpafnode.ImportRTS = append(bgpafnode.ImportRTS, v.RTEntry)
-				case 2:
-					bgpafnode.ExportRTS = append(bgpafnode.ExportRTS, v.RTEntry)
-				}
-				//list rts to be deleted
-				c.DiscreteConfiguration[basic.SONICBGPKEY][bgpafindex] = bgpafnode
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -1218,10 +1305,10 @@ func BGPEncodeMerge(c *tcontext.Tcontext) error {
 	CreateFeaturemap(c.DiscreteConfiguration, basic.SONICBGPKEY, basic.SONICROUTECOMMONKEY)
 	if len(data.VRFs.BGPVRF) > 0 {
 		for _, v := range data.VRFs.BGPVRF {
-			v.VRF = VrfNameFormat(v.VRF)
 			if v.VRF == "" {
-				return errors.New("bgp vrf index missing")
+				return errors.New("bgp vrf can not be nil")
 			}
+			v.VRF = VrfNameFormat(v.VRF)
 			bgpglobalindex := Parameters2Index(v.VRF) + basic.SONICBGPGLOBALELEMENT
 			bgpglobalnode := sonicmodel.BgpGlobalsList{VrfName: v.VRF, LocalASN: basic.DefaultBGPLocalasn}
 			c.DiscreteConfiguration[basic.SONICBGPKEY][bgpglobalindex] = bgpglobalnode
@@ -1230,6 +1317,11 @@ func BGPEncodeMerge(c *tcontext.Tcontext) error {
 
 	if len(data.Familys.Family) > 0 {
 		for _, v := range data.Familys.Family {
+
+			if v.VRF == "" {
+				return errors.New("bgp vrf can not be nil")
+			}
+
 			v.VRF = VrfNameFormat(v.VRF)
 			if v.Balance.MaxBalance == 0 {
 				continue
@@ -1250,11 +1342,13 @@ func BGPEncodeMerge(c *tcontext.Tcontext) error {
 
 	if len(data.Redistributes.Redist) > 0 {
 		for _, v := range data.Redistributes.Redist {
-			v.VRF = VrfNameFormat(v.VRF)
 			err := BGPRedistCheck(&v)
 			if err != nil {
 				return err
 			}
+
+			v.VRF = VrfNameFormat(v.VRF)
+
 			protocol := BGPProtocoltrans(v.Protocol)
 			bgpfamliy := Familytrans(v.Family, "REDISTRIBUTE")
 			redistributeindex := Parameters2Index(v.VRF, bgpfamliy, protocol) + basic.SONICROUTECOMMONREDISTELEMENT
@@ -1283,24 +1377,10 @@ func BGPEncodeRemove(c *tcontext.Tcontext) error {
 	if len(data.VRFs.BGPVRF) > 0 {
 		for _, v := range data.VRFs.BGPVRF {
 			v.VRF = VrfNameFormat(v.VRF)
-			if v.VRF == "" {
-				return errors.New("bgp vrf index missing")
+			err := BGPVRFEncodeRemove(c, v.VRF)
+			if err != nil {
+				return err
 			}
-			bgpglobalindex := Parameters2Index(v.VRF) + basic.SONICBGPGLOBALELEMENT
-			bgpglobalnode := sonicmodel.BgpGlobalsList{VrfName: v.VRF}
-			c.DiscreteConfiguration[basic.SONICBGPKEY][bgpglobalindex] = bgpglobalnode
-			redistributeindex1 := Parameters2Index(v.VRF, "ipv4", "static") + basic.SONICROUTECOMMONREDISTELEMENT
-			redistributeindex2 := Parameters2Index(v.VRF, "ipv4", "connected") + basic.SONICROUTECOMMONREDISTELEMENT
-			redistributeindex3 := Parameters2Index(v.VRF, "ipv6", "static") + basic.SONICROUTECOMMONREDISTELEMENT
-			redistributeindex4 := Parameters2Index(v.VRF, "ipv6", "connected") + basic.SONICROUTECOMMONREDISTELEMENT
-			redistributenode1 := sonicmodel.RouteRedistributenode{VrfName: v.VRF, AddrFamily: "ipv4", SrcProtocol: "static", DstProtocol: "bgp"}
-			redistributenode2 := sonicmodel.RouteRedistributenode{VrfName: v.VRF, AddrFamily: "ipv4", SrcProtocol: "connected", DstProtocol: "bgp"}
-			redistributenode3 := sonicmodel.RouteRedistributenode{VrfName: v.VRF, AddrFamily: "ipv6", SrcProtocol: "static", DstProtocol: "bgp"}
-			redistributenode4 := sonicmodel.RouteRedistributenode{VrfName: v.VRF, AddrFamily: "ipv6", SrcProtocol: "connected", DstProtocol: "bgp"}
-			c.DiscreteConfiguration[basic.SONICROUTECOMMONKEY][redistributeindex1] = redistributenode1
-			c.DiscreteConfiguration[basic.SONICROUTECOMMONKEY][redistributeindex2] = redistributenode2
-			c.DiscreteConfiguration[basic.SONICROUTECOMMONKEY][redistributeindex3] = redistributenode3
-			c.DiscreteConfiguration[basic.SONICROUTECOMMONKEY][redistributeindex4] = redistributenode4
 		}
 	}
 
@@ -1341,6 +1421,28 @@ func BGPEncodeRemove(c *tcontext.Tcontext) error {
 			c.DiscreteConfiguration[basic.SONICROUTECOMMONKEY][redistributeindex] = redistributenode
 		}
 	}
+	return nil
+}
+
+func BGPVRFEncodeRemove(c *tcontext.Tcontext, vrfname string) error {
+	if vrfname == "" {
+		return errors.New("bgp vrf elem can not be nil")
+	}
+	bgpglobalindex := Parameters2Index(vrfname) + basic.SONICBGPGLOBALELEMENT
+	bgpglobalnode := sonicmodel.BgpGlobalsList{VrfName: vrfname}
+	c.DiscreteConfiguration[basic.SONICBGPKEY][bgpglobalindex] = bgpglobalnode
+	redistributeindex1 := Parameters2Index(vrfname, "ipv4", "static") + basic.SONICROUTECOMMONREDISTELEMENT
+	redistributeindex2 := Parameters2Index(vrfname, "ipv4", "connected") + basic.SONICROUTECOMMONREDISTELEMENT
+	redistributeindex3 := Parameters2Index(vrfname, "ipv6", "static") + basic.SONICROUTECOMMONREDISTELEMENT
+	redistributeindex4 := Parameters2Index(vrfname, "ipv6", "connected") + basic.SONICROUTECOMMONREDISTELEMENT
+	redistributenode1 := sonicmodel.RouteRedistributenode{VrfName: vrfname, AddrFamily: "ipv4", SrcProtocol: "static", DstProtocol: "bgp"}
+	redistributenode2 := sonicmodel.RouteRedistributenode{VrfName: vrfname, AddrFamily: "ipv4", SrcProtocol: "connected", DstProtocol: "bgp"}
+	redistributenode3 := sonicmodel.RouteRedistributenode{VrfName: vrfname, AddrFamily: "ipv6", SrcProtocol: "static", DstProtocol: "bgp"}
+	redistributenode4 := sonicmodel.RouteRedistributenode{VrfName: vrfname, AddrFamily: "ipv6", SrcProtocol: "connected", DstProtocol: "bgp"}
+	c.DiscreteConfiguration[basic.SONICROUTECOMMONKEY][redistributeindex1] = redistributenode1
+	c.DiscreteConfiguration[basic.SONICROUTECOMMONKEY][redistributeindex2] = redistributenode2
+	c.DiscreteConfiguration[basic.SONICROUTECOMMONKEY][redistributeindex3] = redistributenode3
+	c.DiscreteConfiguration[basic.SONICROUTECOMMONKEY][redistributeindex4] = redistributenode4
 	return nil
 }
 
@@ -1896,7 +1998,7 @@ func VxlanTunnelMapOrganize(vlan, vni int) sonicmodel.VxlanTunnelMap {
 	var vxlantunnel sonicmodel.VxlanTunnelMap
 	vxlantunnel.Name = basic.TUNNELNAME
 	vlanstr := strconv.Itoa(vlan)
-	vxlantunnel.Mapname = "map_" + strconv.Itoa(vni) + "_Vlan"
+	vxlantunnel.Mapname = "map_" + strconv.Itoa(vni) + "_Vlan" + vlanstr
 	vxlantunnel.Vlan = "Vlan" + vlanstr
 	vxlantunnel.Vni = vni
 	return vxlantunnel
@@ -2010,6 +2112,9 @@ func L3vni2Vlan(l3vni int) int {
 }
 
 func VrfNameFormat(name string) string {
+	if name == "" {
+		return ""
+	}
 	if len(name) < 12 {
 		return "Vrf" + name
 	} else {

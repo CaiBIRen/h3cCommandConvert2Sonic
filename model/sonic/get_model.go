@@ -195,3 +195,17 @@ type Get_OSPFv2Routers struct {
 type Get_SonicOspfv2Router struct {
 	OSPFv2Router Get_OSPFv2Routers `json:"sonic-ospfv2:OSPFV2_ROUTER" mapstructure:"sonic-ospfv2:OSPFV2_ROUTER"`
 }
+
+type Get_StaticRoute struct {
+	Prefix  string `json:"prefix" mapstructure:"prefix"`
+	VrfName string `json:"vrf-name" mapstructure:"vrf-name"`
+}
+
+// 定义包含STATIC_ROUTE_LIST的主结构体
+type Get_StaticRoutes struct {
+	StaticRouteList []Get_StaticRoute `json:"sonic-static-route:STATIC_ROUTE_LIST" mapstructure:"sonic-static-route:STATIC_ROUTE_LIST"`
+}
+
+type Get_VniConfig struct {
+	L3vni int `json:"sonic-vrf:vni" mapstructure:"sonic-vrf:vni"`
+}

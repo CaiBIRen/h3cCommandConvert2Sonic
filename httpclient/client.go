@@ -87,7 +87,7 @@ func (shc *SonicHttpClient) SendSonicRequest(Operation string, Urlsuffix string,
 		return sresp
 	}
 	if resp.StatusCode > basic.DefaultSuccess {
-		glog.Errorf("request sonic server failed")
+		// glog.Errorf("request sonic server failed")
 		var sresp SonicResp
 		sresp.Code = resp.StatusCode
 		body, _ := io.ReadAll(resp.Body)
